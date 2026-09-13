@@ -22,6 +22,7 @@
     "check-dyson": "bun scripts/check-dyson.ts",
     "check-octopus": "bun scripts/check-octopus.ts",
     "check-simplisafe": "bun scripts/check-simplisafe.ts",
-    "simplisafe-auth": "bun scripts/simplisafe-auth.ts"
+    "simplisafe-auth": "bun scripts/simplisafe-auth.ts",
+    "check-somfy": "bun scripts/check-somfy.ts"
   }
 }

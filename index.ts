@@ -9,6 +9,8 @@ import { SdmClient } from "./src/sdm.ts";
 import { BridgedAlarm } from "./src/simplisafe-sensors.ts";
 import { serveCameras } from "./src/simplisafe-stream.ts";
 import { isConfigured, SimpliSafeClient } from "./src/simplisafe.ts";
+import { BridgedShutter } from "./src/somfy-shutter.ts";
+import { parseShutters, SomfyRadio } from "./src/somfy.ts";
 import { Slots } from "./src/slots.ts";
 
 const env = Environment.default;
@@ -93,6 +95,8 @@ let simplisafe: SimpliSafeClient | undefined;
 let alarm: BridgedAlarm | undefined;
 let alarmPoll: ReturnType<typeof setInterval> | undefined;
 let cameraServer: ReturnType<typeof serveCameras> | undefined;
+// So are the Somfy shutters, which own a radio but no poll: RTS never reports anything back.
+let somfy: SomfyRadio | undefined;
 
 function stop() {
   stopping = true;
@@ -104,6 +108,7 @@ function stop() {
   octopus?.close();
   simplisafe?.close();
   alarm?.close();
+  somfy?.close();
   void cameraServer?.stop(true);
 }
 process.on("SIGTERM", stop);
@@ -231,6 +236,17 @@ if (!stopping && isConfigured()) {
     await simplisafe.connect().catch(error => console.error("SimpliSafe connect failed:", error));
   } catch (error) {
     reportAlarmFailure(error);
+  }
+}
+
+// Shutters are added last so an existing install keeps the endpoint numbers it already has.
+// A bad SOMFY_SHUTTERS entry stops the bridge rather than silently driving nothing: unlike a cloud
+// outage, no later tick fixes a typo.
+if (!stopping && process.env.SOMFY_SHUTTERS) {
+  somfy = new SomfyRadio();
+  for (const shutter of parseShutters(process.env.SOMFY_SHUTTERS)) {
+    await BridgedShutter.add(aggregator, somfy, shutter, await slots.slotFor(`somfy:${shutter.address}`));
+    console.log(`Bridged shutter: ${shutter.name} (${shutter.address}${somfy.dryRun ? ", SOMFY_DRY_RUN" : ""})`);
   }
 }
 

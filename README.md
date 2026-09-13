@@ -2,8 +2,9 @@
 
 A Matter bridge for devices that speak everything except Matter: Google Nest thermostats (via the
 Smart Device Management API), a Dyson purifying fan (via its local MQTT broker), an Octopus Energy
-account's smart meters (via the Octopus REST API) and a SimpliSafe alarm's sensors and cameras (via
-the SimpliSafe cloud). Any Matter controller — Apple Home, Alexa, Home Assistant — reads and
+account's smart meters (via the Octopus REST API), a SimpliSafe alarm's sensors and cameras (via
+the SimpliSafe cloud) and Somfy RTS roller shutters (via a CC1101 radio on the Pi). Any Matter
+controller — Apple Home, Alexa, Home Assistant — reads and
 controls them natively.
 
 Each Nest device becomes two bridged endpoints — a thermostat and a humidity sensor — added
@@ -26,6 +27,11 @@ sensor (PM2.5, PM10, VOC, NO2). Its temperature and humidity are deliberately no
 only measures while it runs, and a thermometer that reports intermittently drags every whole-home
 climate summary with it. `bun run check-dyson` still prints them. The fan pushes `STATE-CHANGE` messages as it
 happens, so controller state follows within a second; sensor readings are requested every 30s.
+
+Each Somfy shutter becomes one window covering endpoint with open, close and stop — and
+deliberately no position. RTS is one-way: the shutter never answers, and the wall remote moves it
+without the bridge hearing, so a published position would be a guess that goes stale the first time
+somebody presses the physical remote. See [Somfy](#somfy).
 
 ## Setup
 
@@ -199,6 +205,44 @@ exposing it directly.
 Matter still has no alarm-panel device type, so arming and disarming are not bridged. The client
 supports `setState`, so a controller-side switch is possible; nothing publishes it today.
 
+### Somfy
+
+Roller shutters are driven by `somfy-tx.py`, which transmits Somfy RTS frames through a CC1101 on
+the Pi's SPI bus. The bridge spawns it once per command; that is where `spidev` and `pigpio` live,
+and ~1s of process startup is nothing next to a shutter that takes 20s to travel.
+
+It needs `pigpiod` running (`sudo pigpiod`) and the CC1101's GDO0 jumper on BCM 25
+(`SOMFY_GDO0` to change it).
+
+Each shutter is addressed by a **virtual remote id** — any 3 bytes, one per shutter. Nothing
+discovers it and nothing verifies it; it is what the shutter was paired to:
+
+```bash
+SOMFY_SHUTTERS="Living Room:0x123457,Bedroom:0x123458"
+```
+
+To pair one, hold PROG on an existing remote until the shutter jogs, then within two minutes:
+
+```bash
+bun run check-somfy "Living Room" prog   # shutter jogs again: paired
+bun run check-somfy "Living Room" up     # up | down | my
+bun run check-somfy                      # list what is configured
+```
+
+`my` is the stop button: mid-travel it halts the shutter, at rest it runs the favourite position.
+It is what a controller's stop command sends.
+
+Each remote id carries a **rolling code** that must only ever count up — a shutter ignores a frame
+whose code is behind the last one it accepted, so losing the counter file means re-pairing. One
+file per id, under `SOMFY_ROLL_DIR` (default `/home/raspberry/`, the path baked into the script).
+Back them up with the Matter storage.
+
+Transmissions are queued: one radio, one SPI bus and one pigpio waveform, so two overlapping sends
+would interleave pulses into a frame no shutter decodes.
+
+Without a radio, `SOMFY_DRY_RUN=1` logs commands instead of transmitting, so the bridge runs on any
+machine.
+
 ## Run
 
 ```bash
@@ -238,7 +282,7 @@ Alexa.
 Endpoint numbers are assigned here rather than by matter.js: each device gets a slot of ten
 numbers — `100`-`109` for the first, `110`-`119` for the next — and claims as many as it needs (two
 each for a Nest, a Dyson and a meter point: thermostat and humidity, purifier and air quality, meter
-and tariff; one each for a SimpliSafe sensor or camera). Slots are
+and tariff; one each for a SimpliSafe sensor or camera, and one per Somfy shutter). Slots are
 persisted in `endpoint-slots.json` inside the storage directory. Controllers identify accessories
 by number, so they must not shift when the device list changes. They are also kept to three digits,
 because matter.js builds the descriptor `partsList` with a plain `numbers.sort()` — lexicographic —
