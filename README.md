@@ -245,11 +245,16 @@ A code is written to disk *before* the frame goes out. Gaps are free — a shutt
 ahead of what it last saw — while a repeat is ignored, so a crash mid-send should burn a code, not
 re-use one.
 
-Driving the script by hand means supplying the code yourself, and telling the bridge afterwards:
+Driving the script by hand means supplying both the remote id and the code — it has no defaults for
+either, since a built-in remote id would quietly transmit as somebody else the day it stopped
+matching the caller:
 
 ```bash
 SOMFY_ADDR=0x123457 SOMFY_ROLL=42 python3 somfy-tx.py up
 ```
+
+The bridge does not learn about a frame sent that way, so its counter for that remote is now behind.
+Use `bun run check-somfy` instead unless you have a reason not to.
 
 Transmissions are queued: one radio, one SPI bus and one pigpio waveform, so two overlapping sends
 would interleave pulses into a frame no shutter decodes.

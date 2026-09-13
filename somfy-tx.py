@@ -6,9 +6,9 @@ import spidev, time, pigpio, os, sys
 #
 #   SOMFY_ADDR=0x123457 SOMFY_ROLL=42 python3 somfy-tx.py up
 #
-# It prints `next=43`, the code to send with the following frame.
-ADDR_TEXT = os.environ.get("SOMFY_ADDR", "0x123457")   # virtual remote's ID — any 3 bytes
-ADDR = tuple((int(ADDR_TEXT, 16) >> s) & 0xFF for s in (16, 8, 0))
+# It prints `next=43`, the code to send with the following frame. Neither variable has a default:
+# which remote a frame claims to come from decides which shutter moves, and a built-in one would
+# quietly transmit as some other remote the day it stopped matching the caller's.
 GDO0 = int(os.environ.get("SOMFY_GDO0", 25))   # TX data pin (the jumper)
 CMD = {"my":0x1, "up":0x2, "down":0x4, "prog":0x8}
 
@@ -72,6 +72,14 @@ def send(pulses):
     pi.wave_delete(wid); strobe(0x36)                     # -> IDLE
     pi.write(GDO0,0); pi.stop()
 
+def read_addr():
+    v = os.environ.get("SOMFY_ADDR")
+    if v is None: raise SystemExit("SOMFY_ADDR is required: the caller owns the virtual remote ID")
+    try: a = int(v, 16)
+    except ValueError: raise SystemExit(f"SOMFY_ADDR must be hex, got {v!r}")
+    if not 0 <= a <= 0xFFFFFF: raise SystemExit(f"SOMFY_ADDR must be 3 bytes, got {v!r}")
+    return v, tuple((a >> s) & 0xFF for s in (16, 8, 0))
+
 def read_roll():
     v = os.environ.get("SOMFY_ROLL")
     if v is None: raise SystemExit("SOMFY_ROLL is required: the caller owns the rolling code")
@@ -82,11 +90,12 @@ def read_roll():
     return r
 
 def command(name, repeats=2):
+    addr_text, addr = read_addr()
     roll=read_roll(); key=0xA0 | (roll & 0x0F)
     cc1101_tx_setup()
-    send(build_tx(encode_halfsyms(key, CMD[name], roll, ADDR), repeats))
+    send(build_tx(encode_halfsyms(key, CMD[name], roll, addr), repeats))
     # next= is what the caller persists. Printed only after the frame is out of the radio.
-    print(f"sent {name}: addr={ADDR_TEXT} roll={roll} key=0x{key:02X} next={roll+1}")
+    print(f"sent {name}: addr={addr_text} roll={roll} key=0x{key:02X} next={roll+1}")
 
 if __name__=="__main__":
     command(sys.argv[1] if len(sys.argv)>1 else "prog",
