@@ -1,0 +1,212 @@
+# Deploys the bridge to a Raspberry Pi as a systemd service.
+#
+# Build the binary first -- this playbook ships what is in dist/, it does not compile anything:
+#
+#   bun run build --target bun-linux-arm64
+#   ansible-playbook -i deploy/inventory.example.ini deploy/matter-bridge.yaml
+#
+# Credentials are not in this repo. Either point bridge_env_file at a local .env:
+#
+#   ansible-playbook ... -e bridge_env_file=.env
+#
+# or leave it unset, and the play creates an empty /etc/matter-bridge/env for you to fill in on the
+# Pi. The service will crash-loop until it has credentials, which is the honest failure.
+
+- name: Deploy the Matter bridge
+  hosts: matter_bridge
+  become: true
+
+  vars:
+    bridge_user: matter-bridge
+    bridge_install_dir: /opt/matter-bridge
+    bridge_state_dir: /var/lib/matter-bridge
+    bridge_config_dir: /etc/matter-bridge
+    # Built locally; relative to this playbook's directory.
+    bridge_dist_dir: "{{ playbook_dir }}/../dist"
+    # Set to a local .env to install it; empty leaves the remote file alone.
+    bridge_env_file: ""
+    somfy_spi_device: /dev/spidev0.0
+    # somfy-tx.py's own default location, before the service moved it to the state directory. Files
+    # found here are migrated once; see the task.
+    somfy_legacy_roll_dir: /home/raspberry
+
+  pre_tasks:
+    # Bun has no 32-bit ARM build, so a Pi running the default 32-bit image cannot execute the
+    # binary however capable the CPU is. Catch it here rather than as a confusing exec error.
+    - name: Check the Pi runs a 64-bit OS
+      ansible.builtin.assert:
+        that: ansible_architecture == "aarch64"
+        fail_msg: >-
+          {{ inventory_hostname }} reports {{ ansible_architecture }}, but the binary is arm64.
+          Install 64-bit Raspberry Pi OS; a Zero 2 W's CPU is ARMv8 but the 32-bit image cannot run
+          Bun at all.
+
+    - name: Check the binary has been built
+      ansible.builtin.stat:
+        path: "{{ bridge_dist_dir }}/matter-bridge"
+      delegate_to: localhost
+      become: false
+      register: bridge_binary
+
+    - name: Fail if the binary is missing
+      ansible.builtin.assert:
+        that: bridge_binary.stat.exists
+        fail_msg: "No {{ bridge_dist_dir }}/matter-bridge. Run: bun run build --target bun-linux-arm64"
+
+  tasks:
+    - name: Install the transmitter's Python dependencies
+      ansible.builtin.apt:
+        name:
+          - pigpio         # the daemon somfy-tx.py sends its waveform through
+          - python3-pigpio
+          - python3-spidev # talks to the CC1101 over SPI
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Enable the SPI bus
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        line: dtparam=spi=on
+        regexp: '^#?\s*dtparam=spi='
+        state: present
+      register: spi_config
+
+    - name: Check the SPI device exists
+      ansible.builtin.stat:
+        path: "{{ somfy_spi_device }}"
+      register: spi_device
+
+    # Enabling SPI needs a reboot, and the service would start without a radio in the meantime.
+    - name: Warn when SPI needs a reboot
+      ansible.builtin.debug:
+        msg: >-
+          {{ somfy_spi_device }} does not exist yet{{ ' (SPI was just enabled)' if spi_config.changed else '' }}.
+          Reboot the Pi, or the shutters will not transmit.
+      when: not spi_device.stat.exists
+
+    - name: Run pigpiod at boot
+      ansible.builtin.systemd_service:
+        name: pigpiod
+        enabled: true
+        state: started
+
+    # Named explicitly rather than left to useradd's default, since the unit's Group= depends on it.
+    - name: Create the service group
+      ansible.builtin.group:
+        name: "{{ bridge_user }}"
+        system: true
+
+    - name: Create the service account
+      ansible.builtin.user:
+        name: "{{ bridge_user }}"
+        system: true
+        group: "{{ bridge_user }}"
+        shell: /usr/sbin/nologin
+        home: "{{ bridge_state_dir }}"
+        create_home: false
+        # spi for /dev/spidev0.0. pigpiod is reached over localhost, so no gpio group is needed.
+        groups: spi
+        append: true
+
+    - name: Create the directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ bridge_install_dir }}", mode: "0755" }
+        # Node identity, fabric credentials, endpoint numbers and the Somfy rolling codes. Losing
+        # it means re-commissioning every controller and re-pairing every shutter: back it up.
+        - { path: "{{ bridge_state_dir }}", owner: "{{ bridge_user }}", group: "{{ bridge_user }}", mode: "0750" }
+        - { path: "{{ bridge_config_dir }}", group: "{{ bridge_user }}", mode: "0750" }
+
+    - name: Install the binary
+      ansible.builtin.copy:
+        src: "{{ bridge_dist_dir }}/matter-bridge"
+        dest: "{{ bridge_install_dir }}/matter-bridge"
+        mode: "0755"
+      notify: Restart the bridge
+
+    # Spawned per command rather than bundled, so it travels as a file beside the binary.
+    - name: Install the Somfy transmitter
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../somfy-tx.py"
+        dest: "{{ bridge_install_dir }}/somfy-tx.py"
+        mode: "0755"
+      notify: Restart the bridge
+
+    - name: Install the annotated settings reference
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../.env.example"
+        dest: "{{ bridge_config_dir }}/env.example"
+        mode: "0640"
+        group: "{{ bridge_user }}"
+
+    - name: Install the credentials
+      ansible.builtin.copy:
+        src: "{{ bridge_env_file }}"
+        dest: "{{ bridge_config_dir }}/env"
+        owner: root
+        group: "{{ bridge_user }}"
+        mode: "0640"
+      when: bridge_env_file | length > 0
+      notify: Restart the bridge
+
+    # systemd refuses to start a unit whose EnvironmentFile is missing.
+    - name: Create an empty credentials file to fill in
+      ansible.builtin.copy:
+        content: ""
+        dest: "{{ bridge_config_dir }}/env"
+        owner: root
+        group: "{{ bridge_user }}"
+        mode: "0640"
+        force: false
+      when: bridge_env_file | length == 0
+
+    - name: Find rolling-code files left in the old location
+      ansible.builtin.find:
+        paths: "{{ somfy_legacy_roll_dir }}"
+        patterns: "somfy_roll*.txt"
+      register: legacy_rolls
+
+    # A shutter ignores a frame whose rolling code is behind the last it accepted, so a counter
+    # that restarts means re-pairing. force: false makes this a one-way migration -- a later run
+    # must never copy a stale file back over the one the service has been advancing.
+    - name: Migrate the rolling codes into the state directory
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: >-
+          {{ bridge_state_dir }}/{{ 'somfy_roll_123457.txt'
+             if item.path | basename == 'somfy_roll.txt' else item.path | basename }}
+        remote_src: true
+        owner: "{{ bridge_user }}"
+        group: "{{ bridge_user }}"
+        mode: "0640"
+        force: false
+      loop: "{{ legacy_rolls.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Install the service unit
+      ansible.builtin.template:
+        src: matter-bridge.service.j2
+        dest: /etc/systemd/system/matter-bridge.service
+        mode: "0644"
+      notify: Restart the bridge
+
+    - name: Start the bridge at boot
+      ansible.builtin.systemd_service:
+        name: matter-bridge
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Restart the bridge
+      ansible.builtin.systemd_service:
+        name: matter-bridge
+        state: restarted
+        daemon_reload: true

@@ -298,6 +298,41 @@ and Bun does not implement; the bridge only ever uses file storage.
 the same architecture as the Pi — checks the binary actually starts against the fixtures, and
 uploads `dist/` as an artifact.
 
+### Deploying to the Pi
+
+An Ansible playbook installs the binary as a systemd service:
+
+```bash
+bun run build --target bun-linux-arm64
+cp deploy/inventory.example.ini deploy/inventory.ini   # point it at your Pi
+ansible-playbook -i deploy/inventory.ini deploy/matter-bridge.yaml -e bridge_env_file=.env
+```
+
+It installs `pigpio` and the Python SPI bindings, enables the SPI bus, creates a `matter-bridge`
+system user in the `spi` group, and lays down:
+
+| Path | Holds |
+| --- | --- |
+| `/opt/matter-bridge/` | the binary and `somfy-tx.py` beside it |
+| `/var/lib/matter-bridge/` | node identity, fabric credentials, endpoint numbers, Somfy rolling codes |
+| `/etc/matter-bridge/env` | credentials, `0640` root:matter-bridge |
+
+**Back up `/var/lib/matter-bridge/`.** Losing it means re-commissioning every controller and
+re-pairing every shutter.
+
+Leave `bridge_env_file` off and the play creates an empty `/etc/matter-bridge/env` next to an
+annotated `env.example`; the service crash-loops until it has credentials.
+
+Rolling-code files still sitting in `/home/raspberry` are moved into the state directory on the
+first run — `somfy_roll.txt` becomes `somfy_roll_123457.txt`, matching the default remote id. The
+copy never overwrites, so a later run cannot put a stale counter back over one the service has been
+advancing. `ProtectHome=yes` in the unit is why they have to move.
+
+```bash
+systemctl status matter-bridge
+journalctl -u matter-bridge -f     # the pairing code is printed on first start
+```
+
 ## Endpoints
 
 Every endpoint is a direct child of the aggregator rather than a child composed under a shared

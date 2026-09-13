@@ -1,0 +1,45 @@
+# Managed by deploy/matter-bridge.yaml -- edits here are overwritten on the next run.
+[Unit]
+Description=Matter bridge for Nest, Dyson, Octopus, SimpliSafe and Somfy
+Documentation=https://github.com/Gabzz01/Smart-Flat
+# pigpiod owns the GPIO waveform the Somfy transmitter sends through; somfy-tx.py talks to it over
+# localhost and exits if it is not running.
+After=network-online.target pigpiod.service
+Wants=network-online.target pigpiod.service
+
+[Service]
+Type=simple
+User={{ bridge_user }}
+Group={{ bridge_user }}
+# /dev/spidev0.0 belongs to group spi on Raspberry Pi OS.
+SupplementaryGroups=spi
+ExecStart={{ bridge_install_dir }}/matter-bridge
+WorkingDirectory={{ bridge_state_dir }}
+EnvironmentFile={{ bridge_config_dir }}/env
+# Deployment paths, kept out of the env file so they survive a credentials edit.
+Environment=MATTER_STORAGE_PATH={{ bridge_state_dir }}
+Environment=SOMFY_ROLL_DIR={{ bridge_state_dir }}
+Environment=SOMFY_SCRIPT={{ bridge_install_dir }}/somfy-tx.py
+Restart=on-failure
+RestartSec=5s
+# matter.js shuts down on SIGTERM in about a second, so no KillMode override is needed.
+TimeoutStopSec=10s
+
+# The bridge needs the host network for mDNS and /dev/spidev0.0 for the radio. Everything else is
+# closed, including /home -- which is why the rolling-code files move to the state directory.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths={{ bridge_state_dir }}
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+DevicePolicy=closed
+DeviceAllow={{ somfy_spi_device }} rw
+
+[Install]
+WantedBy=multi-user.target
