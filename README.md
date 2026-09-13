@@ -28,10 +28,11 @@ only measures while it runs, and a thermometer that reports intermittently drags
 climate summary with it. `bun run check-dyson` still prints them. The fan pushes `STATE-CHANGE` messages as it
 happens, so controller state follows within a second; sensor readings are requested every 30s.
 
-Each Somfy shutter becomes one window covering endpoint with open, close and stop — and
-deliberately no position. RTS is one-way: the shutter never answers, and the wall remote moves it
-without the bridge hearing, so a published position would be a guess that goes stale the first time
-somebody presses the physical remote. See [Somfy](#somfy).
+Each Somfy shutter becomes one window covering endpoint with open, close and stop. Position is
+reported but not modelled: open is 0%, closed is 100%, nothing in between, and the number means
+"what you last asked for". RTS is one-way, so the shutter never answers and the wall remote moves it
+without the bridge hearing. Apple Home needs those position characteristics — an accessory without
+them shows as *No Response* — which is what buys the fiction its place. See [Somfy](#somfy).
 
 ## Setup
 
@@ -253,6 +254,12 @@ bun run check-somfy                      # list what is configured
 
 `my` is the stop button: mid-travel it halts the shutter, at rest it runs the favourite position.
 It is what a controller's stop command sends.
+
+A dragged slider lands on whichever end it is nearer, since the shutter can only be told to run —
+there is no "go to 40%" to send — and the position reported is the end it was sent to, never the
+percentage that was asked for. A position starts as unknown and is only ever a claim about what was
+commanded, so it goes stale the moment somebody uses the wall remote. Any full open or close puts it
+right again; a failed transmission puts it back to unknown rather than leaving a lie behind.
 
 Each remote id carries a **rolling code** that must only ever count up — a shutter ignores a frame
 whose code is behind the last one it accepted, so losing the counter means re-pairing.

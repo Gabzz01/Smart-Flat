@@ -13,7 +13,7 @@ import {
 } from "./somfy.ts";
 
 const codePath = () => `${import.meta.dir}/../.matter-storage/test-codes-${crypto.randomUUID()}.json`;
-import { BridgedShutter, commandFor, endpointId } from "./somfy-shutter.ts";
+import { BridgedShutter, CLOSED, endpointId, movementFor, OPEN } from "./somfy-shutter.ts";
 
 test("shutters parse to a name and a normalised address", () => {
   expect(parseShutters("Living Room:0x123457, Bedroom:123458")).toEqual([
@@ -44,12 +44,23 @@ test("the transmitter script is found next to the executable when compiled", () 
 });
 
 test("open and close map to up and down, and a reversed motor swaps them", () => {
-  expect(commandFor(MovementDirection.Open, false)).toBe("up");
-  expect(commandFor(MovementDirection.Close, false)).toBe("down");
-  expect(commandFor(MovementDirection.Open, true)).toBe("down");
-  expect(commandFor(MovementDirection.Close, true)).toBe("up");
-  // Needs a position-aware feature to arise, and there is no position to resolve it with.
-  expect(commandFor(MovementDirection.DefinedByPosition, false)).toBeUndefined();
+  expect(movementFor(MovementDirection.Open, false)).toEqual({ command: "up", position: OPEN });
+  expect(movementFor(MovementDirection.Close, false)).toEqual({ command: "down", position: CLOSED });
+  // Reversed swaps which command opens, not which position counts as open.
+  expect(movementFor(MovementDirection.Open, true)).toEqual({ command: "down", position: OPEN });
+  expect(movementFor(MovementDirection.Close, true)).toEqual({ command: "up", position: CLOSED });
+});
+
+/** The shutter can only be told to run, so a slider drag has to land on one end or the other. */
+test("a target position resolves to the end it is nearer, and is reported as that end", () => {
+  const by = MovementDirection.DefinedByPosition;
+  expect(movementFor(by, false, 0)).toEqual({ command: "up", position: OPEN });
+  expect(movementFor(by, false, 4_999)).toEqual({ command: "up", position: OPEN });
+  // Exactly halfway closes: a shutter asked for "half" is more useful shut than open.
+  expect(movementFor(by, false, 5_000)).toEqual({ command: "down", position: CLOSED });
+  expect(movementFor(by, false, 10_000)).toEqual({ command: "down", position: CLOSED });
+  // Nothing to resolve it with.
+  expect(movementFor(by, false)).toBeUndefined();
 });
 
 /** One radio and one pigpio waveform: two overlapping transmissions make a frame nothing decodes. */
@@ -162,15 +173,71 @@ test("controller commands reach the radio", async () => {
     await BridgedShutter.add(aggregator, radio, shutter, 0);
     const endpoint = aggregator.parts.get(endpointId(shutter))!;
 
-    await endpoint.act(agent => (agent as unknown as { windowCovering: { upOrOpen(): Promise<void> } }).windowCovering.upOrOpen());
-    await endpoint.act(agent => (agent as unknown as { windowCovering: { downOrClose(): Promise<void> } }).windowCovering.downOrClose());
-    await endpoint.act(agent => (agent as unknown as { windowCovering: { stopMotion(): Promise<void> } }).windowCovering.stopMotion());
+    type Covering = {
+      upOrOpen(): Promise<void>;
+      downOrClose(): Promise<void>;
+      stopMotion(): Promise<void>;
+      goToLiftPercentage(request: { liftPercent100thsValue: number }): Promise<void>;
+      state: { currentPositionLiftPercent100ths: number | null };
+    };
+    const covering = (agent: unknown) => (agent as { windowCovering: Covering }).windowCovering;
+    const position = () => endpoint.act(agent => covering(agent).state.currentPositionLiftPercent100ths);
+
+    // Unknown until commanded: the shutter may be anywhere, and nothing reports where.
+    expect(await position()).toBeNull();
+
+    await endpoint.act(agent => covering(agent).upOrOpen());
+    expect(await position()).toBe(OPEN);
+    await endpoint.act(agent => covering(agent).downOrClose());
+    expect(await position()).toBe(CLOSED);
+    await endpoint.act(agent => covering(agent).stopMotion());
+    // A stop lands somewhere unknowable, so the last commanded position stands.
+    expect(await position()).toBe(CLOSED);
+    await endpoint.act(agent => covering(agent).goToLiftPercentage({ liftPercent100thsValue: 2_000 }));
+    expect(await position()).toBe(OPEN);
 
     expect(sent).toEqual([
       { address: "0x123457", command: "up" },
       { address: "0x123457", command: "down" },
       { address: "0x123457", command: "my" },
+      { address: "0x123457", command: "up" },
     ]);
+  } finally {
+    await node.close();
+    await Bun.$`rm -rf ${storage}`.quiet();
+  }
+});
+
+/** The position is written before the frame goes out, so a dead radio must not leave a lie behind. */
+test("a failed transmission leaves the position unchanged", async () => {
+  const radio: Transmitter = {
+    async send() {
+      throw new Error("no pigpiod");
+    },
+  };
+
+  const shutter = { name: "Living Room", address: "0x123457" };
+  const storage = `${import.meta.dir}/../.matter-storage/test-somfy-${crypto.randomUUID()}`;
+  const environment = new Environment("somfy-test", Environment.default);
+  environment.vars.set("storage.path", storage);
+  const node = await ServerNode.create({ id: "somfy-test", environment });
+  const aggregator = new Endpoint(AggregatorEndpoint, { id: "aggregator" });
+  await node.add(aggregator);
+
+  try {
+    await BridgedShutter.add(aggregator, radio, shutter, 0);
+    const endpoint = aggregator.parts.get(endpointId(shutter))!;
+    type Covering = { upOrOpen(): Promise<void>; state: { currentPositionLiftPercent100ths: number | null } };
+    const covering = (agent: unknown) => (agent as { windowCovering: Covering }).windowCovering;
+
+    // The command itself succeeds: the send is deliberately not awaited inside its transaction, and
+    // matter.js would not surface the failure to the controller even if it were.
+    await endpoint.act(agent => covering(agent).upOrOpen());
+
+    const position = () => endpoint.act(agent => covering(agent).state.currentPositionLiftPercent100ths);
+    // The correction lands in a transaction of its own, a tick or two later.
+    for (let attempt = 0; (await position()) !== null && attempt < 50; attempt++) await Bun.sleep(10);
+    expect(await position()).toBeNull();
   } finally {
     await node.close();
     await Bun.$`rm -rf ${storage}`.quiet();

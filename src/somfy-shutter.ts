@@ -20,7 +20,7 @@ import {
   WindowCoveringServer,
 } from "@matter/main/behaviors/window-covering";
 import { WindowCoveringDevice } from "@matter/main/devices";
-import type { Shutter, Transmitter } from "./somfy.ts";
+import type { Shutter, SomfyCommand, Transmitter } from "./somfy.ts";
 import { numbersForSlot } from "./slots.ts";
 
 const { WindowCoveringType, EndProductType } = WindowCovering;
@@ -28,16 +28,32 @@ const { WindowCoveringType, EndProductType } = WindowCovering;
 /** Endpoint id, and the key the radio wiring is looked up by. */
 export const endpointId = (shutter: Shutter) => `somfy-${shutter.address.slice(2)}`;
 
+/** Lift positions in percent100ths: the cluster counts up from fully open. */
+export const OPEN = 0;
+export const CLOSED = 10_000;
+
 /**
- * Which command a direction means, honouring the cluster's reversed-motor config.
+ * Which way to drive, and the position to report once the frame is out.
  *
- * Only Lift is supported, so a movement always carries Open or Close: DefinedByPosition needs a
- * position-aware feature to arise, and there is no position to derive one from anyway.
+ * A target between the two ends resolves to whichever end it is nearer, because the shutter can
+ * only be told to run: there is no "go to 40%" to send. The position reported is the end it was
+ * sent to, never the percentage that was asked for, so the number stays something that was
+ * actually commanded.
+ *
+ * `reversed` is the cluster's motor-reversed config and swaps which command opens, not which
+ * position counts as open.
  */
-export function commandFor(direction: MovementDirection, reversed: boolean) {
-  if (direction === MovementDirection.DefinedByPosition) return undefined;
-  const open = direction === MovementDirection.Open;
-  return (reversed ? !open : open) ? "up" : "down";
+export function movementFor(direction: MovementDirection, reversed: boolean, targetPercent100ths?: number) {
+  const open =
+    direction === MovementDirection.Open
+      ? true
+      : direction === MovementDirection.Close
+        ? false
+        : targetPercent100ths === undefined
+          ? undefined
+          : targetPercent100ths < CLOSED / 2;
+  if (open === undefined) return undefined;
+  return { command: (reversed ? !open : open) ? "up" : "down", position: open ? OPEN : CLOSED } as const;
 }
 
 /**
@@ -47,23 +63,69 @@ export function commandFor(direction: MovementDirection, reversed: boolean) {
  * ponytail: module-level because there is exactly one CC1101 on the bus. A second radio would
  * make this behavior state instead.
  */
-const wiring = new Map<string, { shutter: Shutter; radio: Transmitter }>();
+interface Wiring {
+  shutter: Shutter;
+  radio: Transmitter;
+}
 
-/** Lift only: up, down, stop. No position, so no goToLiftPercentage. */
-class SomfyCoveringServer extends WindowCoveringServer.with("Lift") {
-  override async handleMovement(_type: MovementType, reversed: boolean, direction: MovementDirection) {
+const wiring = new Map<string, Wiring>();
+
+class SomfyCoveringServer extends WindowCoveringServer.with("Lift", "PositionAwareLift") {
+  override handleMovement(
+    _type: MovementType,
+    reversed: boolean,
+    direction: MovementDirection,
+    targetPercent100ths?: number,
+  ) {
     const wired = wiring.get(this.endpoint.id);
     if (!wired) return;
-    const command = commandFor(direction, reversed);
-    if (!command) return;
-    await wired.radio.send(wired.shutter.address, command);
+    const moved = movementFor(direction, reversed, targetPercent100ths);
+    if (!moved) return;
+
+    const previous = this.state.currentPositionLiftPercent100ths;
+    this.state.targetPositionLiftPercent100ths = moved.position;
+    this.state.currentPositionLiftPercent100ths = moved.position;
+    this.#transmit(wired, moved.command, previous);
   }
 
   /** `my` is the stop button on a Somfy remote — mid-travel it halts, at rest it runs the favourite. */
-  override async handleStopMovement() {
+  override handleStopMovement() {
     const wired = wiring.get(this.endpoint.id);
     if (!wired) return;
-    await wired.radio.send(wired.shutter.address, "my");
+    // Stopped somewhere unknowable, so the last position stands and only the target is cleared.
+    const stopped = super.handleStopMovement();
+    this.#transmit(wired, "my", this.state.currentPositionLiftPercent100ths);
+    return stopped;
+  }
+
+  /**
+   * Sends, outside the command's transaction, and puts the position back if the radio never got
+   * there.
+   *
+   * Deliberately not awaited inside the command. matter.js commits that transaction while the send
+   * is still in flight, so a write afterwards throws "Cannot add resources to transaction that is
+   * committing phase one", and a throw does not roll the earlier write back either -- it surfaces
+   * as an unhandled runtime error and the controller is told the command succeeded regardless. So
+   * the correction runs later, in a transaction of its own.
+   */
+  #transmit(wired: Wiring, command: SomfyCommand, previous: number | null) {
+    const endpoint = this.endpoint;
+    void wired.radio.send(wired.shutter.address, command).catch((error: unknown) => {
+      console.error(`${wired.shutter.name}: ${command} failed, position is unknown again:`, error);
+      // Shutting down: the endpoint is gone and there is nothing left to correct.
+      void Promise.resolve(
+        endpoint.act(async agent => {
+          const covering = (agent as unknown as { windowCovering: SomfyCoveringServer }).windowCovering;
+          // The lock on this cluster's state has to be taken asynchronously. Writing straight into a
+          // fresh agent throws "Cannot lock ... synchronously", because a plain write locks with
+          // addResourcesSync and there may still be a writer holding it.
+          await agent.context.transaction.addResources(covering);
+          await agent.context.transaction.begin();
+          covering.state.currentPositionLiftPercent100ths = previous;
+          covering.state.targetPositionLiftPercent100ths = previous;
+        }),
+      ).catch(() => {});
+    });
   }
 }
 
@@ -107,9 +169,19 @@ export class BridgedShutter {
         type: WindowCoveringType.Rollershade,
         endProductType: EndProductType.RollerShutter,
         // No limits are known and none can be learnt, so nothing is operational or open/closed.
-        configStatus: { operational: true, liftMovementReversed: false, liftPositionAware: false, tiltPositionAware: false },
+        configStatus: {
+          operational: true,
+          liftMovementReversed: false,
+          liftPositionAware: true,
+          tiltPositionAware: false,
+        },
         operationalStatus: { global: WindowCovering.MovementStatus.Stopped },
         mode: {},
+        // null is the spec's "unknown", which is the truth until something commands it: the shutter
+        // may be anywhere, and starting on a guess would leave whichever command matched the guess
+        // doing nothing, since a controller sends nothing when the target already equals current.
+        currentPositionLiftPercent100ths: null,
+        targetPositionLiftPercent100ths: null,
       },
       bridgedDeviceBasicInformation: bridgedInfo(shutter),
     })) as ShutterEndpoint;
