@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Endpoint, Environment, ServerNode } from "@matter/main";
 import { AggregatorEndpoint } from "@matter/main/endpoints";
 import { MovementDirection } from "@matter/main/behaviors/window-covering";
-import { parseShutters, SomfyRadio, type SomfyCommand, type Transmitter } from "./somfy.ts";
+import { defaultScript, parseShutters, SomfyRadio, type SomfyCommand, type Transmitter } from "./somfy.ts";
 import { BridgedShutter, commandFor, endpointId } from "./somfy-shutter.ts";
 
 test("shutters parse to a name and a normalised address", () => {
@@ -25,6 +25,12 @@ test("bad entries are rejected rather than silently driving nothing", () => {
   expect(() => parseShutters("Living Room:0x12345")).toThrow(/3 hex bytes/);
   expect(() => parseShutters("Living Room:zzzzzz")).toThrow(/3 hex bytes/);
   expect(() => parseShutters("Living Room:0x123457,Bedroom:123457")).toThrow(/twice/);
+});
+
+/** The script is spawned, so a compiled binary has to find it on disk, not inside itself. */
+test("the transmitter script is found next to the executable when compiled", () => {
+  expect(defaultScript("/opt/bridge/src", "/usr/bin/bun")).toBe("/opt/bridge/src/../somfy-tx.py");
+  expect(defaultScript("/$bunfs/root", "/opt/bridge/matter-bridge")).toBe("/opt/bridge/somfy-tx.py");
 });
 
 test("open and close map to up and down, and a reversed motor swaps them", () => {

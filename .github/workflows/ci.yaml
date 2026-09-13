@@ -1,0 +1,64 @@
+# Builds the bridge for the Raspberry Pi Zero 2 W.
+#
+# The Zero 2 W is a Cortex-A53, so the target is arm64 — Bun has no 32-bit ARM build at all, and a
+# Pi running 32-bit Raspberry Pi OS cannot execute this artifact whatever the CPU can do. Install
+# the 64-bit image.
+#
+# It builds on an arm64 runner rather than cross-compiling from x64, so the tests run on the same
+# architecture that will run the binary. ubuntu-24.04-arm is free for public repositories.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Pinned: the artifact is a deploy target, so the runtime inside it should change when
+          # somebody decides to change it.
+          bun-version: 1.3.14
+
+      - run: bun install --frozen-lockfile
+
+      - run: bunx tsc --noEmit
+
+      - run: bun test
+
+      # The transmitter ships next to the binary and is never bundled, so nothing else would catch
+      # a syntax error in it before the Pi does.
+      - name: Check somfy-tx.py parses
+        run: python3 -m py_compile somfy-tx.py
+
+      - run: bun run build
+
+      - name: Check the binary starts
+        # No credentials on the runner: fixtures stand in, and the shutters transmit nothing.
+        env:
+          MATTER_STORAGE_PATH: ${{ runner.temp }}/matter-storage
+          SDM_FIXTURE: fixtures/devices.json
+          DYSON_FIXTURE: fixtures/dyson-state.json
+          OCTOPUS_FIXTURE: fixtures/octopus.json
+          SIMPLISAFE_FIXTURE: fixtures/simplisafe.json
+          SOMFY_DRY_RUN: "1"
+          SOMFY_SHUTTERS: Living Room:0x123457
+        run: |
+          timeout 30 ./dist/matter-bridge > start.log 2>&1 || true
+          grep -q "Manual pairing code" start.log || { cat start.log; exit 1; }
+          grep -q "Bridged shutter: Living Room" start.log || { cat start.log; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matter-bridge-linux-arm64
+          # The binary, somfy-tx.py beside it (it is spawned, not bundled) and .env.example.
+          path: dist/
+          if-no-files-found: error

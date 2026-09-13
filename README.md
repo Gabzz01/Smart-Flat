@@ -271,6 +271,33 @@ Logging defaults to `info`. Set `MATTER_LOG_LEVEL=debug` for the full matter.js 
 harmless `Error on closing socket ... kStateSymbol` on shutdown, which is Bun's `node:dgram` missing
 an internal that matter.js's socket close path touches.
 
+## Build and deploy
+
+```bash
+bun run build                             # dist/ for this machine
+bun run build --target bun-linux-arm64    # dist/ for the Pi
+```
+
+`dist/` holds one standalone executable with the Bun runtime inside it, plus `somfy-tx.py` and
+`.env.example`. Copy the directory to the Pi, add a `.env`, and run `./matter-bridge` — no Bun, no
+`node_modules` and no `bun install` on a 512 MB device with an SD card for a disk.
+
+`somfy-tx.py` travels beside the binary rather than inside it, because it is spawned rather than
+imported: a compiled binary cannot read it back out of itself. Keep the two together, or point
+`SOMFY_SCRIPT` wherever you put the script.
+
+**The Pi must run 64-bit Raspberry Pi OS.** The Zero 2 W's Cortex-A53 is ARMv8, but Bun has no
+32-bit ARM build at all, so the default 32-bit image cannot run the binary whatever the CPU
+supports. `uname -m` should say `aarch64`.
+
+The build neither minifies nor emits bytecode, and both are deliberate — see the header of
+`scripts/build.ts`. It also stubs `node:sqlite`, which @matter/nodejs re-exports from its barrel
+and Bun does not implement; the bridge only ever uses file storage.
+
+[CI](.github/workflows/ci.yaml) runs the typecheck, the tests and the build on an arm64 runner —
+the same architecture as the Pi — checks the binary actually starts against the fixtures, and
+uploads `dist/` as an artifact.
+
 ## Endpoints
 
 Every endpoint is a direct child of the aggregator rather than a child composed under a shared

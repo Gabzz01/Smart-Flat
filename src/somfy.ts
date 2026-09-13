@@ -29,6 +29,18 @@ export interface Transmitter {
 const ADDRESS = /^(?:0x)?[0-9a-f]{6}$/i;
 
 /**
+ * Where somfy-tx.py is, given the module's own directory and the running executable.
+ *
+ * The script is spawned, not imported, so a compiled binary cannot read it back out of itself:
+ * `import.meta.dir` is the embedded filesystem there, not a real path. Fall back to the directory
+ * the executable sits in, which is where the build puts the script next to the binary.
+ */
+export function defaultScript(dir: string, execPath: string) {
+  if (!dir.startsWith("/$bunfs/")) return `${dir}/../somfy-tx.py`;
+  return `${execPath.slice(0, execPath.lastIndexOf("/"))}/somfy-tx.py`;
+}
+
+/**
  * Shutters from `SOMFY_SHUTTERS`, formatted `Living Room:0x123457,Bedroom:0x123458`.
  *
  * The address is the virtual remote the shutter was paired to with `prog`, not a serial the
@@ -77,7 +89,7 @@ export class SomfyRadio implements Transmitter {
 
   constructor(env: Record<string, string | undefined> = process.env) {
     this.#python = env.SOMFY_PYTHON ?? "python3";
-    this.#script = env.SOMFY_SCRIPT ?? `${import.meta.dir}/../somfy-tx.py`;
+    this.#script = env.SOMFY_SCRIPT ?? defaultScript(import.meta.dir, process.execPath);
     this.#repeats = Number(env.SOMFY_REPEATS ?? 2);
     this.#timeoutMs = Number(env.SOMFY_TIMEOUT_MS ?? 15_000);
     this.#rollDir = env.SOMFY_ROLL_DIR;
