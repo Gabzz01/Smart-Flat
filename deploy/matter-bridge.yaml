@@ -23,8 +23,11 @@
     bridge_config_dir: /etc/matter-bridge
     # Built locally; relative to this playbook's directory.
     bridge_dist_dir: "{{ playbook_dir }}/../dist"
-    # Set to a local .env to install it; empty leaves the remote file alone.
+    # Set to a local .env to install it; empty leaves the remote file alone. A relative path is
+    # read from the repository root, not from wherever ansible-playbook was invoked, because `copy`
+    # resolves src against the playbook's own directory.
     bridge_env_file: ""
+    bridge_env_path: "{{ [playbook_dir, '..', bridge_env_file] | ansible.builtin.path_join }}"
     somfy_spi_device: /dev/spidev0.0
 
   pre_tasks:
@@ -49,6 +52,24 @@
       ansible.builtin.assert:
         that: bridge_binary.stat.exists
         fail_msg: "No {{ bridge_dist_dir }}/matter-bridge. Run: bun run build --target bun-linux-arm64"
+
+    # Checked here rather than at the copy, which is task 18 of 20: a bad path should not be found
+    # out after six things on the Pi have already changed.
+    - name: Check the credentials file exists
+      ansible.builtin.stat:
+        path: "{{ bridge_env_path }}"
+      delegate_to: localhost
+      become: false
+      register: bridge_env_stat
+      when: bridge_env_file | length > 0
+
+    - name: Fail if the credentials file is missing
+      ansible.builtin.assert:
+        that: bridge_env_stat.stat.exists
+        fail_msg: >-
+          No {{ bridge_env_path }}. bridge_env_file is read from the repository root when relative,
+          so `-e bridge_env_file=.env` means the .env beside package.json.
+      when: bridge_env_file | length > 0
 
   tasks:
     - name: Install the transmitter's SPI bindings
@@ -169,7 +190,7 @@
 
     - name: Install the credentials
       ansible.builtin.copy:
-        src: "{{ bridge_env_file }}"
+        src: "{{ bridge_env_path }}"
         dest: "{{ bridge_config_dir }}/env"
         owner: root
         group: "{{ bridge_user }}"
