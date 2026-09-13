@@ -257,9 +257,16 @@ It is what a controller's stop command sends.
 
 A dragged slider lands on whichever end it is nearer, since the shutter can only be told to run —
 there is no "go to 40%" to send — and the position reported is the end it was sent to, never the
-percentage that was asked for. A position starts as unknown and is only ever a claim about what was
-commanded, so it goes stale the moment somebody uses the wall remote. Any full open or close puts it
-right again; a failed transmission puts it back to unknown rather than leaving a lie behind.
+percentage that was asked for. The position is only ever a claim about what was commanded, so it
+goes stale the moment somebody uses the wall remote. Any full open or close puts it right again; a
+failed transmission puts it back to what it was rather than leaving a lie behind.
+
+A shutter nothing has commanded yet reads as closed. That is a guess, and the cluster has a null for
+"unknown", but HomeKit has no such value and leaves the tile on *No Response* when it reads one. The
+cost of the guess is that a command matching it is swallowed by the controller, which sends nothing
+when the target already equals the current position — drive the shutter the other way once and both
+directions work from then on. Matter persists the position, so the guess only applies to a shutter
+that has never been driven through the bridge.
 
 Each remote id carries a **rolling code** that must only ever count up — a shutter ignores a frame
 whose code is behind the last one it accepted, so losing the counter means re-pairing.

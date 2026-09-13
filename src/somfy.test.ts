@@ -13,7 +13,7 @@ import {
 } from "./somfy.ts";
 
 const codePath = () => `${import.meta.dir}/../.matter-storage/test-codes-${crypto.randomUUID()}.json`;
-import { BridgedShutter, CLOSED, endpointId, movementFor, OPEN } from "./somfy-shutter.ts";
+import { BridgedShutter, CLOSED, endpointId, INITIAL, movementFor, OPEN } from "./somfy-shutter.ts";
 
 test("shutters parse to a name and a normalised address", () => {
   expect(parseShutters("Living Room:0x123457, Bedroom:123458")).toEqual([
@@ -183,8 +183,8 @@ test("controller commands reach the radio", async () => {
     const covering = (agent: unknown) => (agent as { windowCovering: Covering }).windowCovering;
     const position = () => endpoint.act(agent => covering(agent).state.currentPositionLiftPercent100ths);
 
-    // Unknown until commanded: the shutter may be anywhere, and nothing reports where.
-    expect(await position()).toBeNull();
+    // Never null: HomeKit has no "unknown" position and drops the accessory when it reads one.
+    expect(await position()).toBe(INITIAL);
 
     await endpoint.act(agent => covering(agent).upOrOpen());
     expect(await position()).toBe(OPEN);
@@ -209,7 +209,7 @@ test("controller commands reach the radio", async () => {
 });
 
 /** The position is written before the frame goes out, so a dead radio must not leave a lie behind. */
-test("a failed transmission leaves the position unchanged", async () => {
+test("a failed transmission puts the position back", async () => {
   const radio: Transmitter = {
     async send() {
       throw new Error("no pigpiod");
@@ -236,8 +236,8 @@ test("a failed transmission leaves the position unchanged", async () => {
 
     const position = () => endpoint.act(agent => covering(agent).state.currentPositionLiftPercent100ths);
     // The correction lands in a transaction of its own, a tick or two later.
-    for (let attempt = 0; (await position()) !== null && attempt < 50; attempt++) await Bun.sleep(10);
-    expect(await position()).toBeNull();
+    for (let attempt = 0; (await position()) !== INITIAL && attempt < 50; attempt++) await Bun.sleep(10);
+    expect(await position()).toBe(INITIAL);
   } finally {
     await node.close();
     await Bun.$`rm -rf ${storage}`.quiet();

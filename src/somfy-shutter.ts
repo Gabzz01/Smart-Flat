@@ -1,14 +1,15 @@
 /**
  * Maps a Somfy RTS shutter onto Matter as a window covering, one endpoint per shutter.
  *
- * The cluster carries the Lift feature only, NOT PositionAwareLift, so a controller gets open,
- * close and stop and no slider. That is the honest mapping: RTS sends nothing back, and the wall
- * remote moves the shutter without the bridge hearing, so any position we published would be a
- * guess that drifts the first time somebody uses the physical remote.
+ * RTS sends nothing back and the wall remote moves the shutter without the bridge hearing, so there
+ * is no real position to report. The cluster still carries PositionAwareLift, because HomeKit's
+ * Window Covering service requires CurrentPosition and TargetPosition and shows the accessory as
+ * "No Response" without them. What is published is the end the shutter was last commanded to --
+ * never a null, never an in-between -- so the number is always something that was actually sent.
  *
- * ponytail: no position emulation. The upgrade is a travel-time knob (SOMFY_TRAVEL_MS) plus
- * PositionAwareLift, running the motor for a proportional slice and firing `my` to stop — add it
- * when a half-open shutter is worth a number that goes stale.
+ * ponytail: no travel model. The upgrade is a travel-time knob (SOMFY_TRAVEL_MS), running the motor
+ * for a proportional slice and firing `my` to stop -- add it when a half-open shutter is worth a
+ * number that goes stale anyway the moment somebody picks up the wall remote.
  */
 
 import { Endpoint } from "@matter/main";
@@ -31,6 +32,16 @@ export const endpointId = (shutter: Shutter) => `somfy-${shutter.address.slice(2
 /** Lift positions in percent100ths: the cluster counts up from fully open. */
 export const OPEN = 0;
 export const CLOSED = 10_000;
+
+/**
+ * What a shutter reads as before anything has been commanded.
+ *
+ * The truth is "unknown", and the cluster has a null for exactly that, but HomeKit has no such
+ * value: a null CurrentPosition leaves the tile stuck on "No Response". So the bridge starts on a
+ * guess and corrects it the first time the shutter is driven. Matter persists the position
+ * (quality N), so the guess only ever applies to a shutter that has never been commanded.
+ */
+export const INITIAL = CLOSED;
 
 /**
  * Which way to drive, and the position to report once the frame is out.
@@ -82,7 +93,7 @@ class SomfyCoveringServer extends WindowCoveringServer.with("Lift", "PositionAwa
     const moved = movementFor(direction, reversed, targetPercent100ths);
     if (!moved) return;
 
-    const previous = this.state.currentPositionLiftPercent100ths;
+    const previous = this.state.currentPositionLiftPercent100ths ?? INITIAL;
     this.state.targetPositionLiftPercent100ths = moved.position;
     this.state.currentPositionLiftPercent100ths = moved.position;
     this.#transmit(wired, moved.command, previous);
@@ -94,7 +105,7 @@ class SomfyCoveringServer extends WindowCoveringServer.with("Lift", "PositionAwa
     if (!wired) return;
     // Stopped somewhere unknowable, so the last position stands and only the target is cleared.
     const stopped = super.handleStopMovement();
-    this.#transmit(wired, "my", this.state.currentPositionLiftPercent100ths);
+    this.#transmit(wired, "my", this.state.currentPositionLiftPercent100ths ?? INITIAL);
     return stopped;
   }
 
@@ -108,7 +119,7 @@ class SomfyCoveringServer extends WindowCoveringServer.with("Lift", "PositionAwa
    * as an unhandled runtime error and the controller is told the command succeeded regardless. So
    * the correction runs later, in a transaction of its own.
    */
-  #transmit(wired: Wiring, command: SomfyCommand, previous: number | null) {
+  #transmit(wired: Wiring, command: SomfyCommand, previous: number) {
     const endpoint = this.endpoint;
     void wired.radio.send(wired.shutter.address, command).catch((error: unknown) => {
       console.error(`${wired.shutter.name}: ${command} failed, position is unknown again:`, error);
@@ -177,11 +188,8 @@ export class BridgedShutter {
         },
         operationalStatus: { global: WindowCovering.MovementStatus.Stopped },
         mode: {},
-        // null is the spec's "unknown", which is the truth until something commands it: the shutter
-        // may be anywhere, and starting on a guess would leave whichever command matched the guess
-        // doing nothing, since a controller sends nothing when the target already equals current.
-        currentPositionLiftPercent100ths: null,
-        targetPositionLiftPercent100ths: null,
+        currentPositionLiftPercent100ths: INITIAL,
+        targetPositionLiftPercent100ths: INITIAL,
       },
       bridgedDeviceBasicInformation: bridgedInfo(shutter),
     })) as ShutterEndpoint;
