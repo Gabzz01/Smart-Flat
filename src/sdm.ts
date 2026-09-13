@@ -35,6 +35,57 @@ export interface SdmDevice {
 
 const API = "https://smartdevicemanagement.googleapis.com/v1";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
+/**
+ * Consent goes through Device Access rather than Google's usual OAuth screen: it is what links the
+ * Nest account to the SDM project, and a token minted anywhere else cannot see the devices.
+ */
+const PARTNER_URL = "https://nestservices.google.com/partnerconnections";
+/** Nothing listens here. The code is read out of the address bar after Google redirects. */
+export const REDIRECT_URI = "https://www.google.com";
+
+/** Where to send the browser to mint a refresh token for this project. */
+export function authUrl(projectId: string, clientId: string) {
+  const query = new URLSearchParams({
+    redirect_uri: REDIRECT_URI,
+    // offline for a refresh token at all; consent to be issued a new one rather than be told the
+    // account has already granted access and handed an access token only.
+    access_type: "offline",
+    prompt: "consent",
+    client_id: clientId,
+    response_type: "code",
+    scope: "https://www.googleapis.com/auth/sdm.service",
+  });
+  return `${PARTNER_URL}/${projectId}/auth?${query}`;
+}
+
+/** The `code` out of a pasted redirect URL, or the code itself if that is what was pasted. */
+export function authorizationCodeFrom(pasted: string) {
+  const text = pasted.trim();
+  if (!text) return "";
+  // Google percent-encodes the code in the redirect, so take it through URLSearchParams.
+  const query = text.match(/[?&]code=([^&\s]+)/);
+  return query ? decodeURIComponent(query[1]!) : text;
+}
+
+/** Exchanges an authorization code for tokens. The refresh token is the one worth keeping. */
+export async function exchangeCode(code: string, env: Record<string, string | undefined> = process.env) {
+  const response = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID ?? "",
+      client_secret: env.GOOGLE_CLIENT_SECRET ?? "",
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: REDIRECT_URI,
+    }),
+  });
+  const body = (await response.json()) as { refresh_token?: string; error?: string; error_description?: string };
+  if (!response.ok) {
+    throw new Error(`Token exchange failed: ${response.status} ${body.error} ${body.error_description ?? ""}`.trim());
+  }
+  return body;
+}
 /** A request that hangs must not stall the poll loop, nor keep the process alive on shutdown. */
 const REQUEST_TIMEOUT_MS = 20_000;
 

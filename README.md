@@ -41,7 +41,21 @@ cp .env.example .env   # fill in the Device Access + OAuth values
 ```
 
 Credentials come from [Device Access](https://developers.google.com/nest/device-access): a project
-id, an OAuth client, and a refresh token for the account that owns the thermostats.
+id, an OAuth client, and a refresh token for the account that owns the thermostats. Mint the
+refresh token with:
+
+```bash
+bun run google-auth     # prints a URL, takes the code from the redirect back
+```
+
+Consent goes through Device Access rather than Google's ordinary OAuth screen, because that is the
+step which links the Nest account to the SDM project — a token minted anywhere else authenticates
+fine and then sees no devices.
+
+**Publish the OAuth consent screen.** While it is in Testing, Google expires refresh tokens after
+**7 days**, and the bridge then logs `Token refresh failed: 400 invalid_grant` once a minute with no
+thermostats bridged. Google Cloud Console → APIs & Services → OAuth consent screen → Publish app;
+unverified is fine for a personal project.
 
 Verify the credentials before commissioning anything:
 
