@@ -18,7 +18,6 @@ WorkingDirectory={{ bridge_state_dir }}
 EnvironmentFile={{ bridge_config_dir }}/env
 # Deployment paths, kept out of the env file so they survive a credentials edit.
 Environment=MATTER_STORAGE_PATH={{ bridge_state_dir }}
-Environment=SOMFY_ROLL_DIR={{ bridge_state_dir }}
 Environment=SOMFY_SCRIPT={{ bridge_install_dir }}/somfy-tx.py
 Restart=on-failure
 RestartSec=5s

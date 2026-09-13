@@ -1,16 +1,14 @@
 import spidev, time, pigpio, os, sys
 
-# Each shutter is paired to its own virtual remote ID, so the bridge passes one per command.
-# Defaults keep `python3 somfy-tx.py up` working on its own.
-DEFAULT_ADDR = "0x123457"                # your virtual remote's ID — pick any 3 bytes
-ADDR_TEXT = os.environ.get("SOMFY_ADDR", DEFAULT_ADDR)
+# This script transmits and nothing else. The caller owns both the virtual remote ID and its
+# rolling code; the bridge keeps them in its Matter storage, alongside everything else that must
+# survive a restart. Two owners of one counter is the one thing a rolling code cannot have.
+#
+#   SOMFY_ADDR=0x123457 SOMFY_ROLL=42 python3 somfy-tx.py up
+#
+# It prints `next=43`, the code to send with the following frame.
+ADDR_TEXT = os.environ.get("SOMFY_ADDR", "0x123457")   # virtual remote's ID — any 3 bytes
 ADDR = tuple((int(ADDR_TEXT, 16) >> s) & 0xFF for s in (16, 8, 0))
-# The rolling code must keep counting up per remote ID: a shutter ignores a frame whose code is
-# behind the last one it accepted, so a fresh file for an already-paired remote means re-pairing.
-# Hence one file per ID — and the original path stays put, so an existing counter keeps counting.
-ROLL_FILE = os.environ.get("SOMFY_ROLL_FILE") or (
-    "/home/raspberry/somfy_roll.txt" if ADDR_TEXT == DEFAULT_ADDR
-    else "/home/raspberry/somfy_roll_%s.txt" % ADDR_TEXT.lower().removeprefix("0x"))
 GDO0 = int(os.environ.get("SOMFY_GDO0", 25))   # TX data pin (the jumper)
 CMD = {"my":0x1, "up":0x2, "down":0x4, "prog":0x8}
 
@@ -74,15 +72,21 @@ def send(pulses):
     pi.wave_delete(wid); strobe(0x36)                     # -> IDLE
     pi.write(GDO0,0); pi.stop()
 
-def next_roll():
-    r = int(open(ROLL_FILE).read())+1 if os.path.exists(ROLL_FILE) else 1
-    open(ROLL_FILE,"w").write(str(r)); return r
+def read_roll():
+    v = os.environ.get("SOMFY_ROLL")
+    if v is None: raise SystemExit("SOMFY_ROLL is required: the caller owns the rolling code")
+    try: r = int(v)
+    except ValueError: raise SystemExit(f"SOMFY_ROLL must be a number, got {v!r}")
+    # The frame carries it in 16 bits, and a shutter only accepts codes ahead of the last it saw.
+    if not 1 <= r <= 0xFFFF: raise SystemExit(f"SOMFY_ROLL must be 1..65535, got {r}")
+    return r
 
 def command(name, repeats=2):
-    roll=next_roll(); key=0xA0 | (roll & 0x0F)
+    roll=read_roll(); key=0xA0 | (roll & 0x0F)
     cc1101_tx_setup()
     send(build_tx(encode_halfsyms(key, CMD[name], roll, ADDR), repeats))
-    print(f"sent {name}: addr={ADDR} roll={roll} key=0x{key:02X}")
+    # next= is what the caller persists. Printed only after the frame is out of the radio.
+    print(f"sent {name}: addr={ADDR_TEXT} roll={roll} key=0x{key:02X} next={roll+1}")
 
 if __name__=="__main__":
     command(sys.argv[1] if len(sys.argv)>1 else "prog",

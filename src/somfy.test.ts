@@ -2,7 +2,17 @@ import { expect, test } from "bun:test";
 import { Endpoint, Environment, ServerNode } from "@matter/main";
 import { AggregatorEndpoint } from "@matter/main/endpoints";
 import { MovementDirection } from "@matter/main/behaviors/window-covering";
-import { defaultScript, parseShutters, SomfyRadio, type SomfyCommand, type Transmitter } from "./somfy.ts";
+import {
+  defaultScript,
+  parseShutters,
+  RollingCodes,
+  rollingCodePath,
+  SomfyRadio,
+  type SomfyCommand,
+  type Transmitter,
+} from "./somfy.ts";
+
+const codePath = () => `${import.meta.dir}/../.matter-storage/test-codes-${crypto.randomUUID()}.json`;
 import { BridgedShutter, commandFor, endpointId } from "./somfy-shutter.ts";
 
 test("shutters parse to a name and a normalised address", () => {
@@ -46,9 +56,10 @@ test("open and close map to up and down, and a reversed motor swaps them", () =>
 test("transmissions are queued, never overlapped", async () => {
   const log = `${import.meta.dir}/../.matter-storage/test-somfy-${crypto.randomUUID()}.log`;
   const script = `${log}.sh`;
+  const codes = codePath();
   // Stands in for somfy-tx.py: brackets its run in the log so an overlap is visible.
   await Bun.write(script, `echo "start $SOMFY_ADDR $1" >> ${log}\nsleep 0.1\necho "end $SOMFY_ADDR $1" >> ${log}\n`);
-  const radio = new SomfyRadio({ SOMFY_PYTHON: "/bin/sh", SOMFY_SCRIPT: script });
+  const radio = new SomfyRadio(await RollingCodes.open(codes), { SOMFY_PYTHON: "/bin/sh", SOMFY_SCRIPT: script });
 
   try {
     await Promise.all([radio.send("0xaaaaaa", "up"), radio.send("0xbbbbbb", "down"), radio.send("0xcccccc", "my")]);
@@ -64,13 +75,15 @@ test("transmissions are queued, never overlapped", async () => {
     radio.close();
     await Bun.file(log).delete();
     await Bun.file(script).delete();
+    await Bun.file(codes).delete();
   }
 });
 
 test("a failed transmission is reported and does not wedge the queue", async () => {
   const script = `${import.meta.dir}/../.matter-storage/test-somfy-${crypto.randomUUID()}.sh`;
+  const codes = codePath();
   await Bun.write(script, 'test "$1" = up && { echo "no pigpiod" >&2; exit 3; }\necho ok\n');
-  const radio = new SomfyRadio({ SOMFY_PYTHON: "/bin/sh", SOMFY_SCRIPT: script });
+  const radio = new SomfyRadio(await RollingCodes.open(codes), { SOMFY_PYTHON: "/bin/sh", SOMFY_SCRIPT: script });
 
   try {
     expect(radio.send("0xaaaaaa", "up")).rejects.toThrow(/exited 3: no pigpiod/);
@@ -78,6 +91,53 @@ test("a failed transmission is reported and does not wedge the queue", async () 
   } finally {
     radio.close();
     await Bun.file(script).delete();
+    await Bun.file(codes).delete();
+  }
+});
+
+/** A shutter ignores a code behind the last it accepted, so the counter may only ever go up. */
+test("rolling codes count up per remote and survive a restart", async () => {
+  const path = codePath();
+  try {
+    const codes = await RollingCodes.open(path);
+    expect(await codes.next("0xaaaaaa")).toBe(1);
+    expect(await codes.next("0xaaaaaa")).toBe(2);
+    // Each virtual remote has its own counter; one shutter's traffic must not skip another's.
+    expect(await codes.next("0xbbbbbb")).toBe(1);
+
+    // Gaps are free, going backwards is not.
+    await codes.advanceTo("0xaaaaaa", 50);
+    expect(await codes.next("0xaaaaaa")).toBe(50);
+    await codes.advanceTo("0xaaaaaa", 10);
+    expect(await codes.next("0xaaaaaa")).toBe(51);
+
+    const reopened = await RollingCodes.open(path);
+    expect(await reopened.next("0xaaaaaa")).toBe(52);
+    expect(await reopened.next("0xbbbbbb")).toBe(2);
+  } finally {
+    await Bun.file(path).delete();
+  }
+});
+
+/** The transmitter owns no state: the code it sends with has to arrive in its environment. */
+test("the reserved code is handed to the transmitter, and its next= is adopted", async () => {
+  const path = codePath();
+  const script = `${path}.sh`;
+  const out = `${path}.out`;
+  await Bun.write(script, `echo "$SOMFY_ADDR $SOMFY_ROLL" >> ${out}\necho "sent $1: roll=$SOMFY_ROLL next=$((SOMFY_ROLL + 7))"\n`);
+  const radio = new SomfyRadio(await RollingCodes.open(path), { SOMFY_PYTHON: "/bin/sh", SOMFY_SCRIPT: script });
+
+  try {
+    await radio.send("0xaaaaaa", "up");
+    await radio.send("0xaaaaaa", "down");
+    // 1, then the 8 the transmitter reported rather than the 2 the reservation alone would give.
+    expect((await Bun.file(out).text()).trim().split("\n")).toEqual(["0xaaaaaa 1", "0xaaaaaa 8"]);
+    expect(await Bun.file(path).json()).toEqual({ "0xaaaaaa": 15 });
+  } finally {
+    radio.close();
+    await Bun.file(script).delete();
+    await Bun.file(out).delete();
+    await Bun.file(path).delete();
   }
 });
 

@@ -10,7 +10,8 @@
  *
  * The transmitter stays Python because that is where spidev and pigpio are. Spawning it per
  * command costs ~1s (CC1101 reset, wake-up frame, repeats), which is nothing next to a shutter
- * that takes 20 seconds to travel.
+ * that takes 20 seconds to travel. It transmits and nothing else: the rolling codes live here, in
+ * the Matter storage, with everything else that has to survive a restart.
  */
 
 export type SomfyCommand = "up" | "down" | "my" | "prog";
@@ -74,26 +75,89 @@ export function parseShutters(spec: string | undefined): Shutter[] {
   return shutters;
 }
 
+/**
+ * Rolling codes per virtual remote, persisted as JSON beside the Matter storage.
+ *
+ * The stored number is the code to send NEXT, not the last one sent, which is also what the
+ * transmitter reports back as `next=`. One meaning on both sides of the boundary.
+ *
+ * A shutter accepts a frame only if its code is ahead of the last it accepted, and gaps are free
+ * while repeats are fatal: skipping to 50 costs nothing, sending 42 twice means the second frame is
+ * ignored. So {@link next} writes the file BEFORE the caller transmits. A crash mid-send then burns
+ * one code instead of handing the same one out again.
+ */
+// somfy-tx.py rejects 0: the frame carries the code in 16 bits and a shutter only accepts one
+// ahead of the last it saw, so counting starts at 1.
+const FIRST_CODE = 1;
+
+export class RollingCodes {
+  readonly #path: string;
+  readonly #codes: Record<string, number>;
+
+  private constructor(path: string, codes: Record<string, number>) {
+    this.#path = path;
+    this.#codes = codes;
+  }
+
+  static async open(path: string) {
+    const file = Bun.file(path);
+    const codes = (await file.exists()) ? ((await file.json()) as Record<string, number>) : {};
+    return new RollingCodes(path, codes);
+  }
+
+  /** Takes the next code, persisting the one after it before the caller transmits. */
+  async next(address: string) {
+    const code = this.#codes[address] ?? FIRST_CODE;
+    await this.#write(address, code + 1);
+    return code;
+  }
+
+  /** What the transmitter reported as its next. Only ever moves the counter forward. */
+  async advanceTo(address: string, code: number) {
+    if (code <= (this.#codes[address] ?? FIRST_CODE)) return;
+    await this.#write(address, code);
+  }
+
+  /** The code this remote will send with next, for `check-somfy` to print. */
+  at(address: string) {
+    return this.#codes[address] ?? FIRST_CODE;
+  }
+
+  async #write(address: string, code: number) {
+    this.#codes[address] = code;
+    await Bun.write(this.#path, `${JSON.stringify(this.#codes, null, 2)}\n`);
+  }
+}
+
+/** Where the rolling codes live: beside the Matter storage, so one backup covers both. */
+export const rollingCodePath = (env: Record<string, string | undefined> = process.env) =>
+  env.SOMFY_ROLL_FILE ?? `${env.MATTER_STORAGE_PATH ?? ".matter-storage"}/somfy-rolling-codes.json`;
+
 /** The CC1101 transmitter: one process per command, one command at a time. */
 export class SomfyRadio implements Transmitter {
   readonly #python: string;
   readonly #script: string;
   readonly #repeats: number;
   readonly #timeoutMs: number;
-  readonly #rollDir?: string;
+  readonly #codes: RollingCodes;
   /** No radio attached: log what would be sent. Lets the bridge run off the Pi. */
   readonly dryRun: boolean;
   /** Tail of the send queue. Never rejects, so one failure does not poison the next command. */
   #queue: Promise<void> = Promise.resolve();
   #closed = false;
 
-  constructor(env: Record<string, string | undefined> = process.env) {
+  constructor(codes: RollingCodes, env: Record<string, string | undefined> = process.env) {
+    this.#codes = codes;
     this.#python = env.SOMFY_PYTHON ?? "python3";
     this.#script = env.SOMFY_SCRIPT ?? defaultScript(import.meta.dir, process.execPath);
     this.#repeats = Number(env.SOMFY_REPEATS ?? 2);
     this.#timeoutMs = Number(env.SOMFY_TIMEOUT_MS ?? 15_000);
-    this.#rollDir = env.SOMFY_ROLL_DIR;
     this.dryRun = env.SOMFY_DRY_RUN === "1";
+  }
+
+  /** Opens the rolling codes at {@link rollingCodePath} and wires them to a radio. */
+  static async open(env: Record<string, string | undefined> = process.env) {
+    return new SomfyRadio(await RollingCodes.open(rollingCodePath(env)), env);
   }
 
   /** Queue a transmission. Resolves once the radio is back in idle, rejects if it never got there. */
@@ -113,13 +177,10 @@ export class SomfyRadio implements Transmitter {
       return;
     }
 
+    // Reserved and on disk before the frame goes out; see RollingCodes.
+    const roll = await this.#codes.next(address);
     const proc = Bun.spawn([this.#python, this.#script, command, String(this.#repeats)], {
-      env: {
-        ...process.env,
-        SOMFY_ADDR: address,
-        // Left unset, the script picks a file per remote id of its own.
-        ...(this.#rollDir ? { SOMFY_ROLL_FILE: `${this.#rollDir}/somfy_roll_${address.slice(2)}.txt` } : {}),
-      },
+      env: { ...process.env, SOMFY_ADDR: address, SOMFY_ROLL: String(roll) },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -136,7 +197,11 @@ export class SomfyRadio implements Transmitter {
       if (code !== 0) {
         throw new Error(`somfy-tx.py ${command} ${address} exited ${code}: ${(err || out).trim() || "no output"}`);
       }
-      // The script prints the rolling code it used, which is the only record that a frame went out.
+      // The transmitter reports the code to send next. It agrees with the reservation in the normal
+      // case; honouring it anyway means a future change to how the script consumes codes cannot
+      // silently leave the counter behind the shutter.
+      const next = out.match(/\bnext=(\d+)\b/);
+      if (next) await this.#codes.advanceTo(address, Number(next[1]));
       console.log(`Somfy: ${out.trim() || `${command} to ${address}`}`);
     } finally {
       clearTimeout(timer);

@@ -8,7 +8,7 @@
  * send it to teach the shutter this virtual remote id.
  */
 
-import { parseShutters, SomfyRadio, type SomfyCommand } from "../src/somfy.ts";
+import { parseShutters, rollingCodePath, RollingCodes, SomfyRadio, type SomfyCommand } from "../src/somfy.ts";
 
 const COMMANDS: SomfyCommand[] = ["up", "down", "my", "prog"];
 
@@ -20,8 +20,11 @@ if (!shutters.length) {
 
 const [name, command = "my"] = process.argv.slice(2);
 if (!name) {
-  console.log(`${shutters.length} shutter(s):`);
-  for (const shutter of shutters) console.log(`  ${shutter.name}  ${shutter.address}`);
+  const codes = await RollingCodes.open(rollingCodePath());
+  console.log(`${shutters.length} shutter(s), rolling codes in ${rollingCodePath()}:`);
+  for (const shutter of shutters) {
+    console.log(`  ${shutter.name}  ${shutter.address}  next roll: ${codes.at(shutter.address)}`);
+  }
   console.log(`\nusage: bun run check-somfy "<name>" <${COMMANDS.join("|")}>`);
   process.exit(0);
 }
@@ -36,7 +39,7 @@ if (!COMMANDS.includes(command as SomfyCommand)) {
   process.exit(1);
 }
 
-const radio = new SomfyRadio();
+const radio = await SomfyRadio.open();
 console.log(`${shutter.name} (${shutter.address}): ${command}${radio.dryRun ? " — SOMFY_DRY_RUN" : ""}`);
 try {
   await radio.send(shutter.address, command as SomfyCommand);

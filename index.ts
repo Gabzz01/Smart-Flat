@@ -243,7 +243,7 @@ if (!stopping && isConfigured()) {
 // A bad SOMFY_SHUTTERS entry stops the bridge rather than silently driving nothing: unlike a cloud
 // outage, no later tick fixes a typo.
 if (!stopping && process.env.SOMFY_SHUTTERS) {
-  somfy = new SomfyRadio();
+  somfy = await SomfyRadio.open();
   for (const shutter of parseShutters(process.env.SOMFY_SHUTTERS)) {
     await BridgedShutter.add(aggregator, somfy, shutter, await slots.slotFor(`somfy:${shutter.address}`));
     console.log(`Bridged shutter: ${shutter.name} (${shutter.address}${somfy.dryRun ? ", SOMFY_DRY_RUN" : ""})`);

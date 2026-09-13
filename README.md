@@ -233,9 +233,23 @@ bun run check-somfy                      # list what is configured
 It is what a controller's stop command sends.
 
 Each remote id carries a **rolling code** that must only ever count up — a shutter ignores a frame
-whose code is behind the last one it accepted, so losing the counter file means re-pairing. One
-file per id, under `SOMFY_ROLL_DIR` (default `/home/raspberry/`, the path baked into the script).
-Back them up with the Matter storage.
+whose code is behind the last one it accepted, so losing the counter means re-pairing.
+
+The bridge owns those counters, in `somfy-rolling-codes.json` inside the Matter storage, and hands
+`somfy-tx.py` the code to send on every command; the transmitter keeps no state of its own. One
+owner is the point: two counters for one remote drift, and the one that falls behind stops working.
+The number stored is the code to send next, which is what `bun run check-somfy` prints and what the
+transmitter echoes back as `next=`.
+
+A code is written to disk *before* the frame goes out. Gaps are free — a shutter accepts anything
+ahead of what it last saw — while a repeat is ignored, so a crash mid-send should burn a code, not
+re-use one.
+
+Driving the script by hand means supplying the code yourself, and telling the bridge afterwards:
+
+```bash
+SOMFY_ADDR=0x123457 SOMFY_ROLL=42 python3 somfy-tx.py up
+```
 
 Transmissions are queued: one radio, one SPI bus and one pigpio waveform, so two overlapping sends
 would interleave pulses into a frame no shutter decodes.
@@ -326,17 +340,17 @@ re-pairing every shutter.
 Leave `bridge_env_file` off and the play creates an empty `/etc/matter-bridge/env` next to an
 annotated `env.example`; the service crash-loops until it has credentials.
 
-Rolling-code files still in `/home/raspberry` have to move into the state directory once, by hand —
-`ProtectHome=yes` in the unit means the service cannot reach them where they are:
+An old `/home/raspberry/somfy_roll.txt` has to be carried over once, by hand, with the service
+stopped. The number in it is the last code that *went out*, and the bridge stores the next one, so
+it goes over incremented:
 
 ```bash
-sudo install -o matter-bridge -g matter-bridge -m 0640 \
-  /home/raspberry/somfy_roll.txt /var/lib/matter-bridge/somfy_roll_123457.txt
+sudo -u matter-bridge tee /var/lib/matter-bridge/somfy-rolling-codes.json <<< \
+  "{ \"0x123457\": $(( $(cat /home/raspberry/somfy_roll.txt) + 1 )) }"
 ```
 
-The name carries the remote id, `123457` being the default one. Move them while the service is
-stopped, and never copy an old file back over one it has been advancing: a shutter ignores a frame
-whose rolling code is behind the last it accepted, so a stale counter means re-pairing.
+Never put an old counter back over one the service has been advancing: a shutter ignores a frame
+whose code is behind the last it accepted, so a stale counter means re-pairing.
 
 ```bash
 systemctl status matter-bridge
