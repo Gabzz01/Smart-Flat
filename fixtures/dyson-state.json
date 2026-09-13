@@ -1,0 +1,101 @@
+{
+  "_comment": "Captured from a Dyson Purifier Cool (438K). Credentials are never stored here.",
+  "state": {
+    "msg": "CURRENT-STATE",
+    "time": "2026-02-03T07:49:17.000Z",
+    "mode-reason": "LAPP",
+    "product-state": {
+      "fpwr": "ON",
+      "auto": "OFF",
+      "oscs": "ON",
+      "oson": "ON",
+      "nmod": "OFF",
+      "rhtm": "ON",
+      "fnst": "FAN",
+      "ercd": "NONE",
+      "wacd": "NONE",
+      "nmdv": "0004",
+      "fnsp": "0005",
+      "bril": "0002",
+      "corf": "ON",
+      "cflr": "INV",
+      "hflr": "0060",
+      "cflt": "SCOG",
+      "hflt": "GCOM",
+      "sltm": "OFF",
+      "osal": "0090",
+      "osau": "0270",
+      "ancp": "CUST",
+      "fdir": "ON"
+    },
+    "scheduler": { "srsc": "0000000000000000", "dstv": "0001", "tzid": "0001" }
+  },
+  "environment": {
+    "msg": "ENVIRONMENTAL-CURRENT-SENSOR-DATA",
+    "time": "2026-02-03T07:49:20.000Z",
+    "data": {
+      "tact": "2952",
+      "hact": "0047",
+      "pm25": "0004",
+      "pm10": "0006",
+      "va10": "0003",
+      "noxl": "0001",
+      "p25r": "0004",
+      "p10r": "0006",
+      "sltm": "OFF"
+    }
+  },
+  "changes": [
+    {
+      "msg": "STATE-CHANGE",
+      "time": "2026-02-03T07:49:17.000Z",
+      "mode-reason": "PRC",
+      "state-reason": "MODE",
+      "product-state": {
+        "fpwr": ["OFF", "ON"],
+        "auto": ["OFF", "OFF"],
+        "oson": ["OFF", "OFF"],
+        "nmod": ["OFF", "OFF"],
+        "fnst": ["OFF", "FAN"],
+        "fnsp": ["0005", "0005"],
+        "cflr": ["INV", "INV"],
+        "hflr": ["0060", "0060"],
+        "fdir": ["ON", "ON"]
+      }
+    },
+    {
+      "msg": "STATE-CHANGE",
+      "time": "2026-02-03T07:49:41.000Z",
+      "mode-reason": "PRC",
+      "state-reason": "MODE",
+      "product-state": {
+        "fpwr": ["ON", "ON"],
+        "auto": ["OFF", "OFF"],
+        "oson": ["OFF", "OFF"],
+        "nmod": ["OFF", "OFF"],
+        "fnst": ["FAN", "FAN"],
+        "fnsp": ["0004", "0003"],
+        "cflr": ["INV", "INV"],
+        "hflr": ["0060", "0060"],
+        "fdir": ["ON", "ON"]
+      }
+    },
+    {
+      "msg": "STATE-CHANGE",
+      "time": "2026-02-03T07:49:48.000Z",
+      "mode-reason": "PRC",
+      "state-reason": "MODE",
+      "product-state": {
+        "fpwr": ["ON", "OFF"],
+        "auto": ["ON", "ON"],
+        "oson": ["OFF", "OFF"],
+        "nmod": ["OFF", "OFF"],
+        "fnst": ["OFF", "OFF"],
+        "fnsp": ["AUTO", "AUTO"],
+        "cflr": ["INV", "INV"],
+        "hflr": ["0060", "0060"],
+        "fdir": ["ON", "ON"]
+      }
+    }
+  ]
+}

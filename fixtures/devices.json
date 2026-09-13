@@ -1,0 +1,86 @@
+{
+  "_comment": "Scrubbed SDM payload: the enterprise id, device ids and structure/room ids are invented. No credentials here. Device ids differ in their last path segment, which is the key the bridge derives endpoints from. It deliberately contains two thermostats in one room, and one with an empty customName that has to fall back to its room name.",
+  "devices": [
+    {
+      "name": "enterprises/00000000-0000-4000-8000-000000000000/devices/AVPHwFIXTUREDEVICE00000000000000000000000000000000000000000000000000000000001",
+      "type": "sdm.devices.types.THERMOSTAT",
+      "traits": {
+        "sdm.devices.traits.Info": { "customName": "Spare Room" },
+        "sdm.devices.traits.Humidity": { "ambientHumidityPercent": 58 },
+        "sdm.devices.traits.Connectivity": { "status": "ONLINE" },
+        "sdm.devices.traits.Fan": {},
+        "sdm.devices.traits.ThermostatMode": { "mode": "OFF", "availableModes": ["HEAT", "OFF"] },
+        "sdm.devices.traits.ThermostatEco": {
+          "availableModes": ["OFF", "MANUAL_ECO"],
+          "mode": "OFF",
+          "heatCelsius": 9.444397,
+          "coolCelsius": 24.444443
+        },
+        "sdm.devices.traits.ThermostatHvac": { "status": "OFF" },
+        "sdm.devices.traits.Settings": { "temperatureScale": "CELSIUS" },
+        "sdm.devices.traits.ThermostatTemperatureSetpoint": {},
+        "sdm.devices.traits.Temperature": { "ambientTemperatureCelsius": 25.75 }
+      },
+      "parentRelations": [
+        {
+          "parent": "enterprises/00000000-0000-4000-8000-000000000000/structures/AVPHwFIXTURESTRUCTURE00001/rooms/AVPHwFIXTUREROOM000000001",
+          "displayName": "Bedroom"
+        }
+      ]
+    },
+    {
+      "name": "enterprises/00000000-0000-4000-8000-000000000000/devices/AVPHwFIXTUREDEVICE00000000000000000000000000000000000000000000000000000000002",
+      "type": "sdm.devices.types.THERMOSTAT",
+      "traits": {
+        "sdm.devices.traits.Info": { "customName": "Study" },
+        "sdm.devices.traits.Humidity": { "ambientHumidityPercent": 53 },
+        "sdm.devices.traits.Connectivity": { "status": "ONLINE" },
+        "sdm.devices.traits.Fan": {},
+        "sdm.devices.traits.ThermostatMode": { "mode": "OFF", "availableModes": ["HEAT", "OFF"] },
+        "sdm.devices.traits.ThermostatEco": {
+          "availableModes": ["OFF", "MANUAL_ECO"],
+          "mode": "OFF",
+          "heatCelsius": 9.444397,
+          "coolCelsius": 24.444443
+        },
+        "sdm.devices.traits.ThermostatHvac": { "status": "OFF" },
+        "sdm.devices.traits.Settings": { "temperatureScale": "CELSIUS" },
+        "sdm.devices.traits.ThermostatTemperatureSetpoint": {},
+        "sdm.devices.traits.Temperature": { "ambientTemperatureCelsius": 26.719986 }
+      },
+      "parentRelations": [
+        {
+          "parent": "enterprises/00000000-0000-4000-8000-000000000000/structures/AVPHwFIXTURESTRUCTURE00001/rooms/AVPHwFIXTUREROOM000000001",
+          "displayName": "Bedroom"
+        }
+      ]
+    },
+    {
+      "name": "enterprises/00000000-0000-4000-8000-000000000000/devices/AVPHwFIXTUREDEVICE00000000000000000000000000000000000000000000000000000000003",
+      "type": "sdm.devices.types.THERMOSTAT",
+      "traits": {
+        "sdm.devices.traits.Info": { "customName": "" },
+        "sdm.devices.traits.Humidity": { "ambientHumidityPercent": 58 },
+        "sdm.devices.traits.Connectivity": { "status": "ONLINE" },
+        "sdm.devices.traits.Fan": {},
+        "sdm.devices.traits.ThermostatMode": { "mode": "OFF", "availableModes": ["HEAT", "OFF"] },
+        "sdm.devices.traits.ThermostatEco": {
+          "availableModes": ["OFF", "MANUAL_ECO"],
+          "mode": "OFF",
+          "heatCelsius": 9.444397,
+          "coolCelsius": 24.444443
+        },
+        "sdm.devices.traits.ThermostatHvac": { "status": "OFF" },
+        "sdm.devices.traits.Settings": { "temperatureScale": "CELSIUS" },
+        "sdm.devices.traits.ThermostatTemperatureSetpoint": {},
+        "sdm.devices.traits.Temperature": { "ambientTemperatureCelsius": 27.279999 }
+      },
+      "parentRelations": [
+        {
+          "parent": "enterprises/00000000-0000-4000-8000-000000000000/structures/AVPHwFIXTURESTRUCTURE00001/rooms/AVPHwFIXTUREROOM000000002",
+          "displayName": "Kitchen"
+        }
+      ]
+    }
+  ]
+}

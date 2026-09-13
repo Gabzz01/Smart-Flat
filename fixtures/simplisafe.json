@@ -1,0 +1,247 @@
+{
+  "_comment": "Scrubbed SimpliSafe payload: subscription ids, camera uuids, sensor serials and the address are invented. No tokens here. It deliberately contains a camera filed twice (once in the subscription, once as a type-21 sensor under the tail of its uuid), a sensor of a type nobody has named, a subscription with no base station, a camera with an unrecognised model, a system with an empty address and a null temperature, and an event with an unmapped code.",
+  "authCheck": {
+    "userId": 1234567
+  },
+  "subscriptions": [
+    {
+      "sid": 4242424,
+      "status": {
+        "hasBaseStation": true
+      },
+      "location": {
+        "street1": "12 Example Street",
+        "system": {
+          "version": 3,
+          "serial": "0000ABCD",
+          "alarmState": "OFF",
+          "isAlarming": false,
+          "isOffline": false,
+          "powerOutage": false,
+          "temperature": 68,
+          "cameras": [
+            {
+              "uuid": "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+              "model": "SS001",
+              "status": "online",
+              "subscription": {
+                "enabled": true
+              },
+              "cameraSettings": {
+                "cameraName": "Living Room",
+                "shutterOff": "closedPrivacy",
+                "shutterHome": "closedPrivacy",
+                "shutterAway": "open"
+              }
+            },
+            {
+              "uuid": "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb",
+              "model": "SS002",
+              "status": "online",
+              "subscription": {
+                "enabled": true
+              },
+              "cameraSettings": {
+                "cameraName": "Front Door",
+                "shutterOff": "open",
+                "shutterHome": "open",
+                "shutterAway": "open"
+              }
+            },
+            {
+              "uuid": "cccccccc-3333-4333-8333-cccccccccccc",
+              "model": "SS099",
+              "status": "offline",
+              "subscription": {
+                "enabled": false
+              },
+              "cameraSettings": {
+                "cameraName": "Garage"
+              }
+            }
+          ],
+          "messages": [
+            {
+              "id": "msg-1",
+              "text": "Your base station lost power.",
+              "category": "error",
+              "code": "1301",
+              "timestamp": 1756512000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sid": 5353535,
+      "status": {
+        "hasBaseStation": false
+      },
+      "location": {
+        "street1": "Old address",
+        "system": {
+          "version": 3,
+          "alarmState": "OFF"
+        }
+      }
+    },
+    {
+      "sid": 6464646,
+      "status": {
+        "hasBaseStation": true
+      },
+      "location": {
+        "street1": "",
+        "system": {
+          "version": 3,
+          "serial": "",
+          "alarmState": "AWAY",
+          "isAlarming": false,
+          "isOffline": false,
+          "powerOutage": false,
+          "temperature": null
+        }
+      }
+    }
+  ],
+  "sensors": {
+    "4242424": [
+      {
+        "serial": "1AAAA111",
+        "name": "Front Door",
+        "type": 5,
+        "status": {
+          "malfunction": false,
+          "triggered": true
+        },
+        "flags": {
+          "lowBattery": false,
+          "offline": false
+        }
+      },
+      {
+        "serial": "6FFFF666",
+        "name": "Balcony Door",
+        "type": 5,
+        "status": {
+          "triggered": false
+        },
+        "flags": {
+          "lowBattery": false,
+          "offline": false
+        }
+      },
+      {
+        "serial": "2BBBB222",
+        "name": "Hallway",
+        "type": 4,
+        "status": {},
+        "flags": {
+          "lowBattery": true,
+          "offline": false
+        }
+      },
+      {
+        "serial": "cccccccc",
+        "name": "Garage",
+        "type": 21,
+        "status": {
+          "malfunction": false
+        },
+        "flags": {
+          "lowBattery": false,
+          "offline": false
+        },
+        "setting": {
+          "off": 0,
+          "home": 0,
+          "home2": 0,
+          "away": 1,
+          "away2": 1,
+          "instantTrigger": false
+        }
+      },
+      {
+        "serial": "4DDDD444",
+        "name": "Keypad",
+        "type": 1,
+        "status": {
+          "malfunction": false
+        },
+        "flags": {
+          "lowBattery": false,
+          "offline": true
+        }
+      },
+      {
+        "serial": "5EEEE555",
+        "name": "Mystery Device",
+        "type": 99,
+        "status": {
+          "malfunction": false
+        },
+        "flags": {
+          "lowBattery": false,
+          "offline": false
+        }
+      }
+    ]
+  },
+  "events": [
+    {
+      "type": "com.simplisafe.event.standard",
+      "data": {
+        "eventCid": 1170,
+        "info": "Camera Motion Detected: Living Room",
+        "sid": 4242424,
+        "eventTimestamp": 1756512345,
+        "pinName": "",
+        "sensorName": "Living Room",
+        "sensorSerial": "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+        "sensorType": 12,
+        "videoStartedBy": "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+        "video": {
+          "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa": {
+            "_links": {
+              "snapshot/jpg": {
+                "href": "https://media.simplisafe.example/snapshot.jpg"
+              },
+              "download/mp4": {
+                "href": "https://media.simplisafe.example/clip.mp4"
+              },
+              "playback/hls": {
+                "href": "https://media.simplisafe.example/clip.m3u8"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "com.simplisafe.event.standard",
+      "data": {
+        "eventCid": 1458,
+        "info": "Doorbell Detected: Front Door",
+        "sid": 4242424,
+        "eventTimestamp": 1756512400,
+        "pinName": "",
+        "sensorName": "Front Door",
+        "sensorSerial": "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb",
+        "sensorType": 15
+      }
+    },
+    {
+      "type": "com.simplisafe.event.standard",
+      "data": {
+        "eventCid": 4242,
+        "info": "Something SimpliSafe has not documented",
+        "sid": 4242424,
+        "eventTimestamp": 1756512500,
+        "pinName": "",
+        "sensorName": "Mystery Device",
+        "sensorSerial": "3CCCC333",
+        "sensorType": 21
+      }
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "matter-bridge",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@matter/main": "^0.17.9",
+    "@matter/nodejs": "^0.17.9",
+    "mqtt": "^5.15.2"
+  },
+  "scripts": {
+    "start": "bun index.ts",
+    "dev": "bun --watch index.ts",
+    "check-google": "bun scripts/check-google.ts",
+    "dump-endpoints": "bun scripts/dump-endpoints.ts",
+    "check-dyson": "bun scripts/check-dyson.ts",
+    "check-octopus": "bun scripts/check-octopus.ts",
+    "check-simplisafe": "bun scripts/check-simplisafe.ts",
+    "simplisafe-auth": "bun scripts/simplisafe-auth.ts"
+  }
+}
