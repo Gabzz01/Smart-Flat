@@ -324,8 +324,12 @@ An Ansible playbook installs the binary as a systemd service:
 ```bash
 bun run build --target bun-linux-arm64
 cp deploy/inventory.example.ini deploy/inventory.ini   # point it at your Pi
-ansible-playbook -i deploy/inventory.ini deploy/matter-bridge.yaml -e bridge_env_file=.env
+ansible-playbook -i deploy/inventory.ini deploy/matter-bridge.yaml -e bridge_env_file=.env -K
 ```
+
+`-K` prompts for the remote sudo password. Drop it only if that account has passwordless sudo —
+the `pi` user does by default, a user you created yourself does not, and without it the play stops
+at the first task with `Missing sudo password`.
 
 The inventory names the Pi by its Tailscale MagicDNS name, so deploys work from anywhere. Getting
 the Pi onto the tailnet is out of scope here — the play assumes it is already there.
