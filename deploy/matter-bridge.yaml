@@ -51,15 +51,40 @@
         fail_msg: "No {{ bridge_dist_dir }}/matter-bridge. Run: bun run build --target bun-linux-arm64"
 
   tasks:
-    - name: Install the transmitter's Python dependencies
+    - name: Install the transmitter's SPI bindings
       ansible.builtin.apt:
-        name:
-          - pigpio         # the daemon somfy-tx.py sends its waveform through
-          - python3-pigpio
-          - python3-spidev # talks to the CC1101 over SPI
+        name: python3-spidev # talks to the CC1101 over SPI
         state: present
         update_cache: true
         cache_valid_time: 3600
+
+    # pigpio is deliberately not installed here, because apt cannot: Debian trixie dropped the
+    # daemon and ships only the client library, which is useless alone. It is built from source
+    # instead (`git clone https://github.com/joan2937/pigpio && make && sudo make install`), so the
+    # play checks for it rather than pretending to manage an install it cannot perform. Upstream
+    # pigpio does not support the Pi 5's RP1 either; this is Pi 4 and earlier territory.
+    - name: Check pigpiod is installed
+      ansible.builtin.command: pigpiod -v
+      register: pigpiod_version
+      changed_when: false
+      failed_when: false
+
+    - name: Check the transmitter's Python modules import
+      ansible.builtin.command:
+        argv: [python3, -c, "import pigpio, spidev"]
+      register: somfy_imports
+      changed_when: false
+      failed_when: false
+
+    - name: Fail when the transmitter's dependencies are missing
+      ansible.builtin.assert:
+        that: pigpiod_version.rc == 0 and somfy_imports.rc == 0
+        fail_msg: >-
+          {{ "pigpiod is not installed." if pigpiod_version.rc != 0 else "" }}
+          {{ "python3 cannot import pigpio and spidev." if somfy_imports.rc != 0 else "" }}
+          Debian trixie has no pigpio package; build it from source:
+          git clone https://github.com/joan2937/pigpio && cd pigpio && make && sudo make install
+        success_msg: "pigpiod {{ pigpiod_version.stdout | trim }}, and pigpio and spidev import."
 
     - name: Enable the SPI bus
       ansible.builtin.lineinfile:

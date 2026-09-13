@@ -211,8 +211,16 @@ Roller shutters are driven by `somfy-tx.py`, which transmits Somfy RTS frames th
 the Pi's SPI bus. The bridge spawns it once per command; that is where `spidev` and `pigpio` live,
 and ~1s of process startup is nothing next to a shutter that takes 20s to travel.
 
-It needs `pigpiod` running (`sudo pigpiod`) and the CC1101's GDO0 jumper on BCM 25
-(`SOMFY_GDO0` to change it).
+It needs `pigpiod` running and the CC1101's GDO0 jumper on BCM 25 (`SOMFY_GDO0` to change it).
+
+Debian trixie has no pigpio package — the daemon was dropped and only the client library remains,
+which is useless on its own — so build it from source. It is DMA-timed and supports the Pi 4 and
+earlier, the Zero 2 W included, but not the Pi 5's RP1:
+
+```bash
+git clone https://github.com/joan2937/pigpio && cd pigpio && make && sudo make install
+sudo systemctl enable --now pigpiod
+```
 
 Each shutter is addressed by a **virtual remote id** — any 3 bytes, one per shutter. Nothing
 discovers it and nothing verifies it; it is what the shutter was paired to:
