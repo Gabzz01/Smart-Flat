@@ -326,11 +326,28 @@ export class BridgedMeter {
     const from = new Date(now.getTime() - WINDOW_DAYS * 86_400_000);
     const readings = this.#inKwh(await this.#client.consumption(this.#point, from, now));
 
+    // Both are null exactly when the window came back empty, since both read the same array.
+    const cumulative = cumulativeEnergy(readings);
+    const periodic = periodicEnergy(readings);
+    if (cumulative && periodic) {
+      // setMeasurement rather than a plain attribute write: CumulativeEnergyMeasured and
+      // PeriodicEnergyMeasured are mandatory with the CUME/PERE features this cluster declares, and
+      // writing the attributes directly publishes the numbers while never emitting the events a
+      // controller may be subscribed to instead. It skips any value left undefined, which is why
+      // the empty case cannot go through it.
+      await this.#meter.act(agent =>
+        agent.electricalEnergyMeasurement.setMeasurement({
+          cumulativeEnergy: { imported: cumulative },
+          periodicEnergy: { imported: periodic },
+        }),
+      );
+    } else {
+      // Nothing to report is not the same as nothing changed: publish unknown over a stale total.
+      await this.#meter.set({
+        electricalEnergyMeasurement: { cumulativeEnergyImported: null, periodicEnergyImported: null },
+      });
+    }
     await this.#meter.set({
-      electricalEnergyMeasurement: {
-        cumulativeEnergyImported: cumulativeEnergy(readings),
-        periodicEnergyImported: periodicEnergy(readings),
-      },
       electricalPowerMeasurement: { activePower: activePower(readings, now) },
     });
 

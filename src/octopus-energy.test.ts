@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
+import { Endpoint, Environment, ServerNode } from "@matter/main";
+import { AggregatorEndpoint } from "@matter/main/endpoints";
+
+type Energy = { energy: number } | null;
 import {
   activePower,
+  BridgedMeter,
   costOf,
   cumulativeEnergy,
   endpointId,
@@ -158,4 +163,52 @@ test("the fixture client returns readings and rates for both fuels", async () =>
   const rates = await client.rates(electricity, "E-1R-AGILE-24-10-01-A", from, to);
   expect(rates.map(entry => entry.pence)).toEqual([21.5, 18.9, 12.04, 9.87]);
   expect((await client.standingCharges(gas, "G-1R-VAR-22-11-01-A"))[0]?.pence).toBe(31.66);
+});
+
+/**
+ * The CUME and PERE features make these events mandatory, so a controller may subscribe to them
+ * instead of polling. Writing the attributes directly type-checks and publishes the right numbers
+ * while emitting nothing, which is exactly the bug this guards.
+ */
+test("a refresh emits the energy events, not just the attributes", async () => {
+  const storage = `${import.meta.dir}/../.matter-storage/test-octopus-${crypto.randomUUID()}`;
+  const environment = new Environment("octopus-test", Environment.default);
+  environment.vars.set("storage.path", storage);
+  const node = await ServerNode.create({ id: "octopus-test", environment });
+  const aggregator = new Endpoint(AggregatorEndpoint, { id: "aggregator" });
+  await node.add(aggregator);
+
+  try {
+    const meter = await BridgedMeter.add(aggregator, client, electricity, 0);
+    const endpoint = aggregator.parts.get(`${endpointId(electricity)}-m`)!;
+    const events = endpoint.events as unknown as {
+      electricalEnergyMeasurement: {
+        cumulativeEnergyMeasured: { on(listener: (payload: unknown) => void): Promise<unknown> };
+        periodicEnergyMeasured: { on(listener: (payload: unknown) => void): Promise<unknown> };
+      };
+    };
+
+    const emitted: string[] = [];
+    await events.electricalEnergyMeasurement.cumulativeEnergyMeasured.on(() => emitted.push("cumulative"));
+    await events.electricalEnergyMeasurement.periodicEnergyMeasured.on(() => emitted.push("periodic"));
+
+    await meter.refresh(new Date("2026-08-29T00:00:00Z"));
+    expect(emitted.sort()).toEqual(["cumulative", "periodic"]);
+
+    // The attributes still carry the numbers; the events are in addition to them, not instead.
+    const imported = await endpoint.act(
+      agent =>
+        (agent as unknown as { electricalEnergyMeasurement: { state: { cumulativeEnergyImported: Energy } } })
+          .electricalEnergyMeasurement.state.cumulativeEnergyImported,
+    );
+    const window = await client.consumption(
+      electricity,
+      new Date("2026-08-28T00:00:00Z"),
+      new Date("2026-08-29T00:00:00Z"),
+    );
+    expect(imported?.energy).toBe(cumulativeEnergy(window)!.energy);
+  } finally {
+    await node.close();
+    await Bun.$`rm -rf ${storage}`.quiet();
+  }
 });

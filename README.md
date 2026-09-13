@@ -97,6 +97,10 @@ Each import meter point on the account — electricity and gas — becomes two e
 `ElectricalEnergyTariff` (0x513) carrying the current unit price and the published forecast through
 the `CommodityPrice` cluster. Export MPANs are skipped.
 
+Energy is published through the cluster's own `setMeasurement`, not by writing the attributes: the
+`CumulativeEnergyMeasured` and `PeriodicEnergyMeasured` events are mandatory alongside the features
+the meter declares, and a plain attribute write publishes the right numbers while emitting nothing.
+
 **What this bridges is history, not live power.** Octopus publishes half-hourly readings with a lag
 of up to 24 hours, and near-real-time demand needs an Octopus Home Mini and a different (GraphQL)
 API. So `activePower` reports `null` unless the newest reading is under 90 minutes old: a day-old
