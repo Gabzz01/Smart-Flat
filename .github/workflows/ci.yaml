@@ -56,6 +56,12 @@ jobs:
           grep -q "Manual pairing code" start.log || { cat start.log; exit 1; }
           grep -q "Bridged shutter: Living Room" start.log || { cat start.log; exit 1; }
 
+      # 250 lines of YAML that nothing else would catch a typo in until a deploy fails halfway.
+      - name: Check the deploy playbook parses
+        run: |
+          pipx install --quiet ansible-core
+          ansible-playbook --syntax-check -i deploy/inventory.example.ini deploy/matter-bridge.yaml
+
       - uses: actions/upload-artifact@v7
         with:
           name: matter-bridge-linux-arm64

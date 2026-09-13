@@ -308,7 +308,19 @@ cp deploy/inventory.example.ini deploy/inventory.ini   # point it at your Pi
 ansible-playbook -i deploy/inventory.ini deploy/matter-bridge.yaml -e bridge_env_file=.env
 ```
 
-It installs `pigpio` and the Python SPI bindings, enables the SPI bus, creates a `matter-bridge`
+The play installs Tailscale first, so every run after the first reaches the Pi by its MagicDNS name
+from anywhere. That first run has to arrive over the LAN and needs an auth key:
+
+```bash
+ansible-playbook ... -e tailscale_authkey=tskey-auth-...
+```
+
+An already-connected node is left alone — `tailscale up` would otherwise renegotiate the
+connection the play is running over. MagicDNS is off by default (`tailscale_accept_dns`), because
+it rewrites `/etc/resolv.conf` and the bridge resolves the Dyson fan at `<serial>.local` over mDNS;
+turn it on and set `DYSON_HOST` to an IP.
+
+It also installs `pigpio` and the Python SPI bindings, enables the SPI bus, creates a `matter-bridge`
 system user in the `spi` group, and lays down:
 
 | Path | Holds |

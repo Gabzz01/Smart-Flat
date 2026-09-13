@@ -11,6 +11,14 @@
 #
 # or leave it unset, and the play creates an empty /etc/matter-bridge/env for you to fill in on the
 # Pi. The service will crash-loop until it has credentials, which is the honest failure.
+#
+# The first task installs Tailscale, which is how later runs reach the Pi. That first run therefore
+# has to arrive some other way -- over the LAN, or on a keyboard -- and needs an auth key:
+#
+#   ansible-playbook ... -e tailscale_authkey=tskey-auth-...
+#
+# Once the Pi is on the tailnet the key is unnecessary: the play leaves an already-connected node
+# alone rather than re-running `tailscale up` underneath the connection it is running over.
 
 - name: Deploy the Matter bridge
   hosts: matter_bridge
@@ -25,6 +33,19 @@
     bridge_dist_dir: "{{ playbook_dir }}/../dist"
     # Set to a local .env to install it; empty leaves the remote file alone.
     bridge_env_file: ""
+    # Only needed to enrol a Pi that is not on the tailnet yet. Reusable or ephemeral, from
+    # https://login.tailscale.com/admin/settings/keys -- pass it on the command line, never here.
+    tailscale_authkey: ""
+    tailscale_hostname: "{{ inventory_hostname_short }}"
+    # 64-bit Raspberry Pi OS reports itself as Debian; the 32-bit image says Raspbian, and
+    # pkgs.tailscale.com publishes under both names.
+    tailscale_distribution: "{{ ansible_distribution | lower }}"
+    # MagicDNS rewrites /etc/resolv.conf, and the bridge resolves the Dyson fan at <serial>.local
+    # over mDNS. Leave this false unless the tailnet's DNS is worth more than that lookup; with it
+    # on, set DYSON_HOST to an IP.
+    tailscale_accept_dns: false
+    # Extra `tailscale up` flags, e.g. ["--ssh"] or ["--advertise-tags=tag:pi"].
+    tailscale_up_args: []
     somfy_spi_device: /dev/spidev0.0
     # somfy-tx.py's own default location, before the service moved it to the state directory. Files
     # found here are migrated once; see the task.
@@ -54,6 +75,77 @@
         fail_msg: "No {{ bridge_dist_dir }}/matter-bridge. Run: bun run build --target bun-linux-arm64"
 
   tasks:
+    # ---------------------------------------------------------------------------------------
+    # Tailscale, which is how this playbook reaches the Pi on every run after the first.
+    # ---------------------------------------------------------------------------------------
+
+    - name: Install the Tailscale signing key
+      ansible.builtin.get_url:
+        url: "https://pkgs.tailscale.com/stable/{{ tailscale_distribution }}/{{ ansible_distribution_release }}.noarmor.gpg"
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        mode: "0644"
+
+    - name: Add the Tailscale apt repository
+      ansible.builtin.get_url:
+        url: "https://pkgs.tailscale.com/stable/{{ tailscale_distribution }}/{{ ansible_distribution_release }}.tailscale-keyring.list"
+        dest: /etc/apt/sources.list.d/tailscale.list
+        mode: "0644"
+      register: tailscale_repo
+
+    - name: Install Tailscale
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+        update_cache: "{{ tailscale_repo.changed }}"
+
+    - name: Run tailscaled at boot
+      ansible.builtin.systemd_service:
+        name: tailscaled
+        enabled: true
+        state: started
+
+    - name: Read the tailnet connection state
+      ansible.builtin.command: tailscale status --json
+      register: tailscale_state
+      changed_when: false
+      failed_when: false
+
+    # `tailscale status --json` exits non-zero when logged out but still prints usable JSON, so the
+    # state comes from BackendState rather than from the exit code.
+    - name: Determine whether the Pi is already on the tailnet
+      ansible.builtin.set_fact:
+        tailscale_connected: >-
+          {{ (tailscale_state.stdout | from_json).BackendState | default("") == "Running"
+             if tailscale_state.stdout | trim | length > 0 else false }}
+
+    - name: Check there is a way to enrol an unconnected Pi
+      ansible.builtin.assert:
+        that: tailscale_connected or tailscale_authkey | length > 0
+        fail_msg: >-
+          {{ inventory_hostname }} is not on the tailnet and no tailscale_authkey was given. Pass
+          one with -e tailscale_authkey=tskey-auth-... on this first run.
+
+    # Guarded rather than unconditional: `tailscale up` on an already-connected node can renegotiate
+    # the very connection this play is running over, and there is nothing to gain by doing it again.
+    - name: Join the tailnet
+      ansible.builtin.command:
+        argv: >-
+          {{ ["tailscale", "up", "--authkey", tailscale_authkey, "--hostname", tailscale_hostname,
+              "--accept-dns=" ~ (tailscale_accept_dns | bool | lower)] + tailscale_up_args }}
+      when: not tailscale_connected
+      no_log: true
+      changed_when: true
+
+    - name: Report the tailnet address
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} is on the tailnet as
+          {{ tailscale_hostname }}{{ " (already connected)" if tailscale_connected else " (just joined)" }}.
+
+    # ---------------------------------------------------------------------------------------
+    # The bridge itself.
+    # ---------------------------------------------------------------------------------------
+
     - name: Install the transmitter's Python dependencies
       ansible.builtin.apt:
         name:
