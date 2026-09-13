@@ -175,7 +175,12 @@ something to do on a loop.
 
 Neither source reports when motion *stops*, so occupancy is held for `SIMPLISAFE_MOTION_HOLD_MS`
 (60s) and released on a timer. That is a knob, not a measurement — shorten it for a hallway,
-lengthen it for a room you actually sit in.
+lengthen it for a room you actually sit in. The cluster publishes the hold as `holdTime` in whole
+seconds, clamped to the 1s–3600s limits it advertises alongside it: a sub-second setting would round
+to zero and fail the endpoint's own validation on startup.
+
+Each occupancy endpoint also emits `OccupancyChanged`, which matters because the hold is short —
+a controller that only polls the attribute can miss an entire motion window between reads.
 
 **Unknown device types are not errors here.** `simplisafe-python` raises on any type id outside its
 enum, and one unrecognised device takes the whole account down with it. `deviceTypeOf` keeps the

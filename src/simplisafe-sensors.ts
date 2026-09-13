@@ -41,6 +41,21 @@ import { numbersForSlot } from "./slots.ts";
  */
 export const MOTION_HOLD_MS = Number(process.env.SIMPLISAFE_MOTION_HOLD_MS ?? 60_000);
 
+/** The bounds the cluster publishes as holdTimeLimits, in seconds. */
+export const HOLD_MIN_S = 1;
+export const HOLD_MAX_S = 3600;
+
+/**
+ * The hold as the cluster wants it: whole seconds, inside the limits we publish for it.
+ *
+ * The clamp is not cosmetic. holdTime is validated against holdTimeLimits at initialization, so a
+ * SIMPLISAFE_MOTION_HOLD_MS under 500 rounds to 0 and takes every motion endpoint down with a
+ * constraint error. The hold itself stays in milliseconds and is not clamped -- only what is
+ * published about it.
+ */
+export const holdSeconds = (holdMs: number) =>
+  Math.min(HOLD_MAX_S, Math.max(HOLD_MIN_S, Math.round(holdMs / 1000)));
+
 /** Entry sensors. */
 export const ENTRY_TYPE = 5;
 /** Motion sensors. The v2 hardware (20) reports the same way. */
@@ -78,7 +93,10 @@ export function motionSerialOf(event: SimpliSafeEvent): string | undefined {
 
 const OccupancyDevice = OccupancySensorDevice.with(
   // PIR is what both a SimpliSafe motion sensor and a camera's motion detection actually are.
-  OccupancySensingServer.with("PassiveInfrared"),
+  // OccupancyEvent makes the cluster emit OccupancyChanged; the server does it on its own once the
+  // feature is on. Worth having because the hold is short: a controller polling the attribute can
+  // miss a whole motion window between reads, while an event cannot be missed that way.
+  OccupancySensingServer.with("PassiveInfrared", "OccupancyEvent"),
   BridgedDeviceBasicInformationServer,
 );
 type OccupancyEndpoint = Endpoint<typeof OccupancyDevice>;
@@ -169,8 +187,8 @@ export class BridgedMotion {
         occupancySensorType: OccupancySensing.OccupancySensorType.Pir,
         occupancySensorTypeBitmap: { pir: true },
         // Matter's own name for the hold, in seconds, so a controller can show what it is doing.
-        holdTime: Math.round(holdMs / 1000),
-        holdTimeLimits: { holdTimeMin: 1, holdTimeMax: 3600, holdTimeDefault: Math.round(holdMs / 1000) },
+        holdTime: holdSeconds(holdMs),
+        holdTimeLimits: { holdTimeMin: HOLD_MIN_S, holdTimeMax: HOLD_MAX_S, holdTimeDefault: holdSeconds(holdMs) },
       },
       bridgedDeviceBasicInformation: bridgedInfo(init.serial, init.name, init.productName),
     })) as OccupancyEndpoint;

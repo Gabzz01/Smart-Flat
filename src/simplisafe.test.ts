@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { Endpoint, Environment, ServerNode } from "@matter/main";
+import { AggregatorEndpoint } from "@matter/main/endpoints";
+
+type OccupancyChanged = { occupancy: { occupied?: boolean } };
 import {
   authorizationCodeFrom,
   authUrl,
@@ -12,7 +16,15 @@ import {
   systemStateOf,
   videoUrl,
 } from "./simplisafe.ts";
-import { contactStateOf, entrySensors, motionSensors, motionSerialOf } from "./simplisafe-sensors.ts";
+import {
+  BridgedMotion,
+  contactStateOf,
+  holdSeconds,
+  endpointId,
+  entrySensors,
+  motionSensors,
+  motionSerialOf,
+} from "./simplisafe-sensors.ts";
 import { cameraUuidFrom } from "./simplisafe-stream.ts";
 
 const client = new SimpliSafeClient({ SIMPLISAFE_FIXTURE: "fixtures/simplisafe.json" });
@@ -181,4 +193,52 @@ test("the stream route accepts a camera uuid and nothing else", () => {
   expect(cameraUuidFrom("/camera/")).toBeUndefined();
   expect(cameraUuidFrom("/camera/../etc/passwd")).toBeUndefined();
   expect(cameraUuidFrom("/")).toBeUndefined();
+});
+
+/** holdTime is validated against the limits the same cluster publishes, so 0 crashes the endpoint. */
+test("the published hold stays inside the limits it is validated against", () => {
+  expect(holdSeconds(60_000)).toBe(60);
+  // Rounds to 0 without the clamp, and every motion endpoint fails to initialize.
+  expect(holdSeconds(400)).toBe(1);
+  expect(holdSeconds(0)).toBe(1);
+  expect(holdSeconds(10 * 3600 * 1000)).toBe(3600);
+});
+
+/**
+ * SimpliSafe reports the start of motion and never its end, so occupancy is a short hold. A
+ * controller reading the attribute between polls can miss the whole window; the event cannot be
+ * missed that way, which is the only reason the OccupancyEvent feature is enabled.
+ */
+test("motion emits OccupancyChanged, set and cleared", async () => {
+  const storage = `${import.meta.dir}/../.matter-storage/test-simplisafe-${crypto.randomUUID()}`;
+  const environment = new Environment("simplisafe-test", Environment.default);
+  environment.vars.set("storage.path", storage);
+  const node = await ServerNode.create({ id: "simplisafe-test", environment });
+  const aggregator = new Endpoint(AggregatorEndpoint, { id: "aggregator" });
+  await node.add(aggregator);
+
+  try {
+    const hold = 40;
+    const motion = await BridgedMotion.add(
+      aggregator,
+      { serial: "0295988a", name: "Hallway", productName: "Motion Sensor" },
+      0,
+      hold,
+    );
+    const endpoint = aggregator.parts.get(endpointId("0295988a"))!;
+
+    // parts.get() loses the endpoint's type, and the event only exists with the feature enabled.
+    const events = endpoint.events as unknown as {
+      occupancySensing: { occupancyChanged: { on(listener: (payload: OccupancyChanged) => void): Promise<unknown> } };
+    };
+    const occupied: boolean[] = [];
+    await events.occupancySensing.occupancyChanged.on(({ occupancy }) => occupied.push(!!occupancy.occupied));
+
+    await motion.trigger();
+    for (let attempt = 0; occupied.length < 2 && attempt < 50; attempt++) await Bun.sleep(10);
+    expect(occupied).toEqual([true, false]);
+  } finally {
+    await node.close();
+    await Bun.$`rm -rf ${storage}`.quiet();
+  }
 });
