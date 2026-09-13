@@ -326,10 +326,17 @@ re-pairing every shutter.
 Leave `bridge_env_file` off and the play creates an empty `/etc/matter-bridge/env` next to an
 annotated `env.example`; the service crash-loops until it has credentials.
 
-Rolling-code files still sitting in `/home/raspberry` are moved into the state directory on the
-first run — `somfy_roll.txt` becomes `somfy_roll_123457.txt`, matching the default remote id. The
-copy never overwrites, so a later run cannot put a stale counter back over one the service has been
-advancing. `ProtectHome=yes` in the unit is why they have to move.
+Rolling-code files still in `/home/raspberry` have to move into the state directory once, by hand —
+`ProtectHome=yes` in the unit means the service cannot reach them where they are:
+
+```bash
+sudo install -o matter-bridge -g matter-bridge -m 0640 \
+  /home/raspberry/somfy_roll.txt /var/lib/matter-bridge/somfy_roll_123457.txt
+```
+
+The name carries the remote id, `123457` being the default one. Move them while the service is
+stopped, and never copy an old file back over one it has been advancing: a shutter ignores a frame
+whose rolling code is behind the last it accepted, so a stale counter means re-pairing.
 
 ```bash
 systemctl status matter-bridge

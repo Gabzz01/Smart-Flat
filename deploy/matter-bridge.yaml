@@ -26,9 +26,6 @@
     # Set to a local .env to install it; empty leaves the remote file alone.
     bridge_env_file: ""
     somfy_spi_device: /dev/spidev0.0
-    # somfy-tx.py's own default location, before the service moved it to the state directory. Files
-    # found here are migrated once; see the task.
-    somfy_legacy_roll_dir: /home/raspberry
 
   pre_tasks:
     # Bun has no 32-bit ARM build, so a Pi running the default 32-bit image cannot execute the
@@ -165,30 +162,6 @@
         mode: "0640"
         force: false
       when: bridge_env_file | length == 0
-
-    - name: Find rolling-code files left in the old location
-      ansible.builtin.find:
-        paths: "{{ somfy_legacy_roll_dir }}"
-        patterns: "somfy_roll*.txt"
-      register: legacy_rolls
-
-    # A shutter ignores a frame whose rolling code is behind the last it accepted, so a counter
-    # that restarts means re-pairing. force: false makes this a one-way migration -- a later run
-    # must never copy a stale file back over the one the service has been advancing.
-    - name: Migrate the rolling codes into the state directory
-      ansible.builtin.copy:
-        src: "{{ item.path }}"
-        dest: >-
-          {{ bridge_state_dir }}/{{ 'somfy_roll_123457.txt'
-             if item.path | basename == 'somfy_roll.txt' else item.path | basename }}
-        remote_src: true
-        owner: "{{ bridge_user }}"
-        group: "{{ bridge_user }}"
-        mode: "0640"
-        force: false
-      loop: "{{ legacy_rolls.files }}"
-      loop_control:
-        label: "{{ item.path }}"
 
     - name: Install the service unit
       ansible.builtin.template:
